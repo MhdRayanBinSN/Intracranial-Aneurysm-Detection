@@ -1,0 +1,22 @@
+====================================================================================================
+ANEURYSM DETECTION REPORT
+====================================================================================================
+Generated: 2025-10-20 20:46:09
+SeriesInstanceUID: 1.2.826.0.1.3680043.8.498.10035643165968342618460849823699311381
+Patient: 62y Female
+Modality: CTA
+Aneurysm Locations (Training): Right Supraclinoid Internal Carotid Artery, Left Middle Cerebral Artery, Right Anterior Cerebral Artery
+Selected Filter: Right Supraclinoid Internal Carotid Artery
+Total Slices Processed: 1
+====================================================================================================
+
+SLICE 1
+================================================================================
+SOPInstanceUID: 1.2.826.0.1.3680043.8.498.14504961303532677815336995545201912867
+Location: Right Supraclinoid Internal Carotid Artery
+Raw Coordinates: {'x': 232.88987039309842, 'y': 226.4305401310092}
+Parsed Coordinates:
+   - X: 232.89, Y: 226.43, Width: 50.00, Height: 50.00
+     Location Label: Right Supraclinoid Internal Carotid Artery
+Annotated Image Saved: slice_1_Right_Supraclinoid_Internal_Carotid_Artery_1.2.826.0.1.368.png
+

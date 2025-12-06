@@ -1,0 +1,24 @@
+{
+  "series_info": {
+    "SeriesInstanceUID": "1.2.826.0.1.3680043.8.498.10035643165968342618460849823699311381",
+    "PatientAge": 62,
+    "PatientSex": "Female",
+    "Modality": "CTA",
+    "AneurysmLocations": [
+      "Right Supraclinoid Internal Carotid Artery",
+      "Left Middle Cerebral Artery",
+      "Right Anterior Cerebral Artery"
+    ]
+  },
+  "coordinates": [
+    {
+      "slice": 1,
+      "sop_id": "1.2.826.0.1.3680043.8.498.14504961303532677815336995545201912867",
+      "x": 232.88987039309842,
+      "y": 226.4305401310092,
+      "width": 50.0,
+      "height": 50.0,
+      "location": "Right Supraclinoid Internal Carotid Artery"
+    }
+  ]
+}

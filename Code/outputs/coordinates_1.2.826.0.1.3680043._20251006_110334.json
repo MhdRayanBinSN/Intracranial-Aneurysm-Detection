@@ -1,0 +1,22 @@
+{
+  "series_info": {
+    "SeriesInstanceUID": "1.2.826.0.1.3680043.8.498.10242908234090194014051186313014188903",
+    "PatientAge": 73,
+    "PatientSex": "Female",
+    "Modality": "MRA",
+    "AneurysmLocations": [
+      "Right Middle Cerebral Artery"
+    ]
+  },
+  "coordinates": [
+    {
+      "slice": 1,
+      "sop_id": "1.2.826.0.1.3680043.8.498.10978209953037744086830995192466328920",
+      "x": 197.6182742744475,
+      "y": 213.95564711225092,
+      "width": 50.0,
+      "height": 50.0,
+      "location": "Right Middle Cerebral Artery"
+    }
+  ]
+}

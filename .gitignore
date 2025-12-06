@@ -1,0 +1,13 @@
+# Windows system files
+desktop.ini
+
+# Folder icons
+folderico-red.ico
+
+# Zip files
+rsna-intracranial-aneurysm-detection.zip
+series.zip
+*.zip
+
+# Series folder
+series/

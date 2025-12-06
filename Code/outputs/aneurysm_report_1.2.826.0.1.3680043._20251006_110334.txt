@@ -1,0 +1,22 @@
+====================================================================================================
+ANEURYSM DETECTION REPORT
+====================================================================================================
+Generated: 2025-10-06 11:03:34
+SeriesInstanceUID: 1.2.826.0.1.3680043.8.498.10242908234090194014051186313014188903
+Patient: 73y Female
+Modality: MRA
+Aneurysm Locations (Training): Right Middle Cerebral Artery
+Selected Filter: Right Middle Cerebral Artery
+Total Slices Processed: 1
+====================================================================================================
+
+SLICE 1
+================================================================================
+SOPInstanceUID: 1.2.826.0.1.3680043.8.498.10978209953037744086830995192466328920
+Location: Right Middle Cerebral Artery
+Raw Coordinates: {'x': 197.6182742744475, 'y': 213.95564711225092}
+Parsed Coordinates:
+   - X: 197.62, Y: 213.96, Width: 50.00, Height: 50.00
+     Location Label: Right Middle Cerebral Artery
+Annotated Image Saved: slice_1_Right_Middle_Cerebral_Artery_1.2.826.0.1.368.png
+
