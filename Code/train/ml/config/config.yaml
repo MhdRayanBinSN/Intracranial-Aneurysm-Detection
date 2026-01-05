@@ -1,0 +1,100 @@
+# =============================================================================
+# Intracranial Aneurysm Detection Configuration
+# Optimized for RTX 3060 12GB VRAM
+
+# Project info
+project:
+  name: "Aneurysm Detection"
+  
+# Data Configuration
+data:
+  zip_path: "C:/Users/Rayan/Desktop/Main Project/rsna-intracranial-aneurysm-detection.zip"
+  cache_dir: "./cache"
+  image_size: [128, 128]  # Reduced for memory
+  num_slices: 32  # Reduced from 64 for memory
+  train_split: 0.8
+  num_workers: 0  # Set to 0 for Windows (avoids multiprocessing issues with zip)
+  
+# Preprocessing
+preprocessing:
+  ct_window_center: 40
+  ct_window_width: 400
+  mr_percentile_lower: 1
+  mr_percentile_upper: 99
+  
+# Augmentation - DISABLED for now to fix memory issues
+augmentation:
+  enabled: false
+
+# Model Configuration
+model:
+  name: "resnet3d_18"
+  in_channels: 1
+  num_classes: 14
+  dropout: 0.3
+  pretrained: false
+  
+# Training Configuration  
+training:
+  batch_size: 1  # RTX 3060 - safer with batch size 1
+  gradient_accumulation: 8  # Effective batch size = 8
+  epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  scheduler: "cosine"  # Options: cosine, step, plateau
+  warmup_epochs: 5
+  early_stopping_patience: 10
+  
+  # Mixed Precision (saves VRAM, faster training)
+  mixed_precision: true
+  
+  # Classification Loss function
+  loss: "focal"  # Options: bce, focal, asymmetric, multitask
+  cls_loss: "focal"  # For multi-task
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+  
+  # Segmentation Loss (for multi-task)
+  seg_loss: "dice_bce"  # Options: dice, dice_bce, bce
+  
+  # Multi-task Loss Weights
+  cls_weight: 1.0  # Weight for classification loss
+  seg_weight: 1.0  # Weight for segmentation loss
+  
+  # Class weights (for imbalanced data)
+  use_class_weights: true
+  
+# Checkpointing
+checkpoint:
+  save_dir: "./checkpoints"
+  save_best_only: true
+  monitor: "val_auc"
+  mode: "max"
+  
+# Logging
+logging:
+  tensorboard: true
+  log_dir: "./logs"
+  log_every_n_steps: 10
+  
+# Inference
+inference:
+  batch_size: 4
+  tta: false  # Test-time augmentation
+  threshold: 0.5
+
+# Anatomical Locations (for reference)
+locations:
+  - "Left Infraclinoid Internal Carotid Artery"
+  - "Right Infraclinoid Internal Carotid Artery"
+  - "Left Supraclinoid Internal Carotid Artery"
+  - "Right Supraclinoid Internal Carotid Artery"
+  - "Left Middle Cerebral Artery"
+  - "Right Middle Cerebral Artery"
+  - "Left Anterior Cerebral Artery"
+  - "Right Anterior Cerebral Artery"
+  - "Left Posterior Communicating Artery"
+  - "Right Posterior Communicating Artery"
+  - "Basilar Tip"
+  - "Other Posterior Circulation"
+  - "Aneurysm Present"

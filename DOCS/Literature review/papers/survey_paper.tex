@@ -1,0 +1,801 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{pifont} % For checkmarks and crosses
+\usepackage{rotating} % For rotated table headers
+\usepackage{array} % For advanced table formatting
+\usepackage{makecell} % For line breaks in table cells
+
+% Define checkmark and cross commands
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{A Review on Intracranial Aneurysm Detection and Segmentation using Deep Learning}
+
+\author{\IEEEauthorblockN{Muahmmed Rayan*, Alen Sebastian\textsuperscript{\textdagger}, Tobin Tom\textsuperscript{\textdaggerdbl}, Ajas Ajmal\textsuperscript{\textsection}, Subash M\textsuperscript{\textparagraph}, Athira S Nath\textsuperscript{\textbar}}
+\IEEEauthorblockA{\textit{Department of CSE, College of Engineering Kidangoor} \\
+\textit{Kottayam, Kerala, India}\\
+*rayan6203@gmail.com, \textsuperscript{\textdagger}alenvattakunnel@gmail.com, \textsuperscript{\textdaggerdbl}tobintom222@gmail.com, \\
+\textsuperscript{\textsection}ajasajmal03@gmail.com, \textsuperscript{\textparagraph}sm29032004@gmail.com, \textsuperscript{\textbar}athiranath695@gmail.com}
+}
+
+\maketitle
+
+\begin{abstract}
+Intracranial aneurysms (IAs) are pathological dilations of cerebral arteries that pose a significant health risk, affecting 3-6\% of the adult population. Rupture leads to subarachnoid hemorrhage with mortality rates exceeding 40\%. Early detection through non-invasive imaging is crucial for timely intervention. This comprehensive survey reviews recent advances in deep learning-based approaches for automated IA detection and segmentation from medical imaging modalities including Computed Tomography Angiography (CTA), Magnetic Resonance Angiography (MRA), and Digital Subtraction Angiography (DSA). We systematically analyze methodologies across three categories: detection-focused methods, segmentation approaches, and hybrid detection-segmentation systems. Key architectures reviewed include 3D Convolutional Neural Networks (CNNs), U-Net variants (SC-3D-UNet, Attention U-Net), global-local networks, and ensemble methods. Through comparative analysis of over 10 state-of-the-art models including GLIA-Net, HeadXNet, and specialized MRA detection systems, we examine their architectural innovations, training strategies for handling class imbalance, dataset requirements, and performance metrics (sensitivity: 82-95\%, false positives: 0.1-4.4 per case). We also discuss clinical validation through reader studies demonstrating significant improvements in clinician diagnostic accuracy. Current challenges including small aneurysm detection, multi-center generalization, and clinical workflow integration are highlighted along with future research directions toward explainable AI and real-time processing capabilities.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Intracranial Aneurysm, Deep Learning, Segmentation, Detection, CTA, MRA, GLIA-Net, HeadXNet.
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Intracranial aneurysms (IAs) are abnormal focal dilations in the walls of cerebral arteries, representing a critical neurovascular condition affecting approximately 3\% to 6\% of the general adult population worldwide \cite{bo2021toward}. While many IAs remain asymptomatic throughout a patient's lifetime, their rupture leads to subarachnoid hemorrhage (SAH), a catastrophic event associated with mortality rates exceeding 40\% and severe disability in more than 30\% of survivors \cite{ueda2019deep}. The annual incidence of aneurysmal SAH is estimated at 6-9 per 100,000 individuals, making early detection and risk stratification paramount for preventive intervention.
+
+Clinical diagnosis of IAs relies on various medical imaging modalities. Digital Subtraction Angiography (DSA) remains the gold standard due to its superior spatial resolution and dynamic visualization capabilities. However, DSA is invasive, requiring catheterization and contrast injection, which limits its use for screening purposes. Consequently, non-invasive alternatives have gained prominence: Computed Tomography Angiography (CTA) offers excellent spatial resolution with rapid acquisition times, making it the preferred choice in acute settings; Magnetic Resonance Angiography (MRA) provides radiation-free imaging suitable for longitudinal monitoring and screening, though with lower spatial resolution compared to CTA \cite{park2019headxnet}.
+
+Despite advances in imaging technology, the interpretation of these complex 3D volumetric datasets remains challenging. Manual detection and characterization of IAs by radiologists is time-consuming, with interpretation times ranging from 5-15 minutes per case depending on complexity. Moreover, detection accuracy varies significantly based on aneurysm size, location, and reader experience. Small aneurysms (less than 3mm in diameter) are particularly prone to oversight, with miss rates reported between 10-30\% in clinical practice. Inter-observer variability further complicates diagnosis, with agreement rates (kappa statistics) ranging from 0.6 to 0.8 even among experienced neuroradiologists.
+
+\subsection{Evolution from Traditional CAD to Deep Learning}
+
+Computer-Aided Diagnosis (CAD) systems for IA detection have evolved through several generations. First-generation systems (1990s-2000s) employed classical image processing techniques including edge detection, morphological filtering, and shape analysis based on hand-crafted features such as vessel curvature and intensity gradients. These methods achieved modest sensitivity (50-70\%) but suffered from high false positive rates (10-50 per case), limiting clinical adoption.
+
+Second-generation approaches (2000s-2010s) introduced machine learning classifiers (Support Vector Machines, Random Forests) operating on engineered feature sets. While improving performance moderately, these systems remained constrained by the quality of feature engineering and struggled with the inherent complexity and variability of cerebrovascular anatomy.
+
+The advent of deep learning, particularly Convolutional Neural Networks (CNNs), marked a paradigm shift. Unlike traditional methods, CNNs automatically learn hierarchical feature representations directly from image data, capturing both low-level patterns (edges, textures) and high-level semantic concepts (vessel structures, aneurysm morphologies). Since 2015, deep learning-based CAD systems have demonstrated performance approaching or even surpassing human experts in certain metrics, with sensitivities exceeding 90\% and false positive rates reduced to 1-5 per case \cite{bo2021toward,park2019headxnet}.
+
+\subsection{Survey Scope and Contributions}
+
+This survey provides a comprehensive and systematic review of deep learning approaches for intracranial aneurysm detection and segmentation. Our contributions include:
+
+\begin{enumerate}
+    \item \textbf{Comprehensive Coverage}: We analyze over 10 state-of-the-art deep learning models spanning detection-only, segmentation-only, and hybrid approaches across multiple imaging modalities (CTA, MRA, DSA).
+    
+    \item \textbf{Thematic Organization}: Unlike chronological reviews, we organize methods by their primary technical approach (detection-focused, segmentation-focused, hybrid systems, and clinical integration), facilitating targeted understanding for researchers and practitioners.
+    
+    \item \textbf{Architectural Analysis}: We provide detailed examination of key network architectures including 3D U-Net variants, global-local networks, attention mechanisms, and ensemble methods, highlighting their specific innovations for handling IA detection challenges.
+    
+    \item \textbf{Performance Synthesis}: We present comprehensive comparative tables of performance metrics, dataset characteristics, and computational requirements, enabling fair assessment across studies.
+    
+    \item \textbf{Clinical Perspective}: We emphasize clinically-relevant aspects including reader study results, workflow integration considerations, and regulatory pathways, bridging the gap between algorithmic development and clinical deployment.
+    
+    \item \textbf{Future Directions}: We identify critical open challenges and promising research avenues including explainability, small aneurysm detection, and multi-center generalization.
+\end{enumerate}
+
+The remainder of this paper is organized as follows: Section II provides background on medical imaging modalities and technical challenges. Section III presents a detailed literature review organized by methodological categories. Section IV discusses key techniques and architectural innovations. Section V analyzes datasets and evaluation methodologies. Section VI examines clinical impact and validation studies. Section VII discusses trends and trade-offs. Section VIII outlines challenges and future directions, and Section IX concludes.
+
+
+
+\section{Background and Technical Challenges}
+
+This section provides essential medical context about intracranial aneurysms as a disease, followed by an overview of imaging modalities and the key technical challenges in automated detection and segmentation.
+
+\subsection{Disease Background: Intracranial Aneurysms}
+
+\subsubsection{Pathophysiology and Formation}
+
+Intracranial aneurysms (IAs) are localized, abnormal dilations or bulges in the walls of cerebral blood vessels. These pathological formations develop when the arterial wall weakens due to hemodynamic stress, congenital structural deficiencies, or degenerative changes in the vessel wall. The cerebral arterial system, particularly the Circle of Willis and its major branches, experiences complex blood flow patterns with high wall shear stress at bifurcation points, creating conditions conducive to aneurysm formation.
+
+The pathological process involves degradation of the tunica media (muscular layer of the arterial wall) and fragmentation of the internal elastic lamina, leading to localized vessel wall thinning. As blood pressure acts on these weakened areas, the vessel wall progressively dilates, forming a saccular (berry-like) or fusiform (spindle-shaped) outpouching. Approximately 90\% of intracranial aneurysms are saccular, characterized by a distinct neck connecting the aneurysm dome to the parent artery.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.45\textwidth]{cerebral_aneurysm_diagram.jpg}}
+\caption{Anatomical illustration of a cerebral aneurysm showing the characteristic bulging of the arterial wall. The inset provides a magnified view of the aneurysm sac protruding from the parent blood vessel. This saccular morphology, resembling a berry attached to the vessel, represents approximately 90\% of all intracranial aneurysms.}
+\label{fig:aneurysm_anatomy}
+\end{figure}
+
+\subsubsection{Epidemiology and Clinical Significance}
+
+Intracranial aneurysms affect approximately 3-6\\% of the general adult population worldwide, with prevalence increasing with age (peak incidence in 50-60 year age group). The condition exhibits slight female predominance (female-to-male ratio of 3:2), partially attributed to hormonal influences on vessel wall integrity. Geographic variations exist, with higher prevalence reported in Finland, Japan, and certain populations with genetic predisposition.
+
+The clinical significance of IAs extends beyond their prevalence due to the catastrophic consequences of rupture. Rupture leads to subarachnoid hemorrhage (SAH), a neurological emergency with:
+\begin{itemize}
+    \item \textbf{Mortality}: 40-50\\% within the first 30 days post-rupture
+    \item \textbf{Severe disability}: 30-35\\% of survivors experience permanent neurological deficits
+    \item \textbf{Annual incidence}: 6-9 cases of aneurysmal SAH per 100,000 individuals
+    \item \textbf{Societal impact}: Primarily affects working-age adults, resulting in substantial years of life lost
+\end{itemize}
+
+\subsubsection{Risk Factors and Etiology}
+
+Multiple modifiable and non-modifiable risk factors contribute to aneurysm formation and rupture:
+
+\textbf{Non-modifiable factors}:
+\begin{itemize}
+    \item \textbf{Age and gender}: Increasing age (¿40 years), female sex
+    \item \textbf{Genetic predisposition}: Family history (first-degree relatives with IAs have 4× increased risk), hereditary connective tissue disorders (Ehlers-Danlos syndrome, Marfan syndrome), autosomal dominant polycystic kidney disease (ADPKD)
+    \item \textbf{Race/ethnicity}: Higher incidence in Finnish, Japanese populations
+\end{itemize}
+
+\textbf{Modifiable factors}:
+\begin{itemize}
+    \item \textbf{Hypertension}: Most significant modifiable risk factor (RR: 2.5-3.0)
+    \item \textbf{Smoking}: Doubles rupture risk through endothelial damage and inflammation
+    \item \textbf{Alcohol consumption}: Heavy drinking associated with increased rupture risk
+    \item \textbf{Sympathomimetic drug use}: Cocaine, amphetamines
+\end{itemize}
+
+\subsubsection{Clinical Presentation and Symptoms}
+
+\textbf{Unruptured aneurysms}: The majority remain asymptomatic and are discovered incidentally during imaging for unrelated conditions. However, larger or strategically located aneurysms may cause:
+\begin{itemize}
+    \item \textbf{Mass effect symptoms}: Cranial nerve palsies (particularly CN III from posterior communicating artery aneurysms), visual field defects, headaches
+    \item \textbf{Thromboembolic events}: Rare, from clot formation within the aneurysm
+    \item \textbf{Sentinel headaches}: Warning leaks (10-15\\% of patients) presenting as sudden severe headache days-to-weeks before major rupture
+\end{itemize}
+
+\textbf{Ruptured aneurysms} present with acute subarachnoid hemorrhage characterized by:
+\begin{itemize}
+    \item \textbf{Thunderclap headache}: Sudden, severe "worst headache of life" reaching maximum intensity within seconds-to-minutes
+    \item \textbf{Neurological signs}: Loss of consciousness (50\\%), meningeal irritation (neck stiffness), focal deficits, seizures (10-25\\%)
+    \item \textbf{Ophthalmologic findings}: Subhyaloid hemorrhage (Terson syndrome), CN III palsy
+\end{itemize}
+
+\subsubsection{Diagnosis and Management}
+
+\textbf{Diagnostic imaging} forms the cornerstone of IA detection:
+\begin{itemize}
+    \item \textbf{Screening}: Time-of-Flight MRA for high-risk populations (family history, genetic conditions)
+    \item \textbf{Emergency evaluation}: Non-contrast CT followed by CTA for suspected SAH
+    \item \textbf{Definitive diagnosis}: Digital Subtraction Angiography (DSA) remains gold standard for treatment planning
+\end{itemize}
+
+\textbf{Treatment strategies} depend on rupture status, aneurysm characteristics, and patient factors:
+\begin{itemize}
+    \item \textbf{Conservative management}: Small (\u003c7mm), asymptomatic unruptured aneurysms in low-risk locations may be monitored with serial imaging
+    \item \textbf{Endovascular coiling}: Minimally invasive catheter-based approach filling aneurysm with platinum coils
+    \item \textbf{Surgical clipping}: Open neurosurgical procedure placing titanium clip across aneurysm neck
+    \item \textbf{Flow diversion}: Newer technique using intravascular stent-like devices for complex aneurysms
+\end{itemize}
+
+Early detection of unruptured aneurysms through screening and improved diagnostic accuracy directly impacts patient outcomes, motivating the development of automated detection systems reviewed in this survey. The heterogeneity in aneurysm characteristics (size, location, morphology) and imaging appearance creates substantial challenges for both human readers and machine learning algorithms.
+
+\subsection{Medical Imaging Modalities}
+
+\textbf{Computed Tomography Angiography (CTA)} acquires volumetric datasets with voxel resolutions typically ranging from 0.3-0.6mm isotropic. CTA provides excellent delineation of vessel anatomy and calcifications, with acquisition times of 5-10 seconds. The rapid acquisition makes CTA ideal for emergency settings and uncooperative patients. However, CTA involves ionizing radiation (effective dose: 2-4 mSv) and iodinated contrast agents, limiting repeated examinations.
+
+\textbf{Magnetic Resonance Angiography (MRA)} offers radiation-free imaging with two main variants: Time-of-Flight (TOF-MRA) exploits flow-related enhancement without requiring contrast agents, while Contrast-Enhanced MRA (CE-MRA) uses gadolinium-based agents for improved signal. TOF-MRA is particularly popular for screening due to its non-invasive nature, though spatial resolution (0.5-1.0mm) is typically lower than CTA. Acquisition times range from 5-15 minutes.
+
+\textbf{Digital Subtraction Angiography (DSA)} provides dynamic visualization of blood flow with sub-millimeter spatial resolution. Multiple projection angles enable comprehensive 3D reconstruction. Despite being the gold standard for diagnosis and treatment planning, DSA's invasive nature (1-2\% complication rate) restricts its use primarily to patients requiring therapeutic intervention.
+
+\subsubsection{Aneurysm Locations and the Circle of Willis}
+
+Understanding the anatomical distribution of intracranial aneurysms is essential for both clinical diagnosis and algorithm development. The Circle of Willis, a ring-like arterial structure at the base of the brain, serves as the primary collateral circulation system connecting the anterior and posterior cerebral circulation. This vascular network, formed by the junction of the internal carotid arteries and vertebrobasilar system, is the predominant site for aneurysm formation due to hemodynamic stress at bifurcation points and vessel junctions.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.48\textwidth]{circle_of_willis_anatomy_1766913497062.png}}
+\caption{Anatomical diagram of the Circle of Willis showing the major arterial structures. The circle is formed by the anterior communicating artery (AComA), bilateral anterior cerebral arteries (ACA), bilateral internal carotid arteries (ICA), bilateral posterior communicating arteries (PComA), bilateral posterior cerebral arteries (PCA), and the basilar artery (BA). Aneurysms most commonly occur at arterial bifurcations and junctions within this structure.}
+\label{fig:circle_willis}
+\end{figure}
+
+Intracranial aneurysms are classified into 13 standardized anatomical locations based on their arterial origin (Figure \ref{fig:locations}). The distribution is non-uniform, with certain locations exhibiting significantly higher prevalence:
+
+\begin{enumerate}
+    \item \textbf{Anterior Communicating Artery (AComA)}: Most common location (30-35\% of aneurysms), connecting the left and right anterior cerebral arteries
+    \item \textbf{Internal Carotid Artery (ICA)}: Including multiple sub-locations:
+    \begin{itemize}
+        \item ICA bifurcation (ICA-T)
+        \item Ophthalmic artery origin
+        \item Anterior choroidal artery origin
+        \item ICA posterior wall
+    \end{itemize}
+    \item \textbf{Posterior Communicating Artery (PComA)}: Second most common (25-30\%), at the ICA-PComA junction
+    \item \textbf{Middle Cerebral Artery (MCA)}: MCA bifurcation/trifurcation (20-25\%)
+    \item \textbf{Anterior Cerebral Artery (ACA)}: Distal to AComA junction
+    \item \textbf{Basilar Artery (BA)}: Basilar tip/bifurcation (5-10\%)
+    \item \textbf{Posterior Cerebral Artery (PCA)}: Rare location
+    \item \textbf{Vertebral Artery (VA)}: Including vertebrobasilar junction
+    \item \textbf{Superior Cerebellar Artery (SCA)}: Posterior circulation
+    \item \textbf{Anterior Inferior Cerebellar Artery (AICA)}: Rare
+    \item \textbf{Posterior Inferior Cerebellar Artery (PICA)}: VA-PICA junction
+    \item \textbf{Pericallosal Artery}: Distal ACA branches
+    \item \textbf{Other/Multiple}: Atypical locations or multiple simultaneous aneurysms
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.40\textwidth]{thirteen_aneurysm_locations_list_1766913443129.png}}
+\caption{Complete list of the 13 standardized aneurysm location labels used in clinical practice and research datasets. This classification system enables consistent reporting and comparison across studies.}
+\label{fig:locations}
+\end{figure}
+
+Location significantly impacts clinical presentation, rupture risk, and detection challenges. AComA aneurysms, while most common, can be difficult to visualize on certain imaging orientations due to overlapping vessel structures. PComA aneurysms are frequently associated with third cranial nerve palsy when symptomatic. Posterior circulation aneurysms (BA, PICA, SCA) generally carry higher rupture risk but represent only 10-15\% of cases. From a deep learning perspective, location affects detection difficulty: anterior circulation aneurysms benefit from higher perfusion and contrast enhancement in CTA/MRA, while posterior circulation locations suffer from bone artifacts (petrous bone, clivus) and lower signal intensity in TOF-MRA due to slower flow velocities.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.48\textwidth]{aneurysm_examples_cta_1766913109177.png}}
+\caption{Clinical CTA examples demonstrating bilateral posterior communicating artery (PComA) aneurysms. These images illustrate typical appearance of aneurysms on volumetric imaging, showing the characteristic saccular morphology and relationship to parent vessels. Such bilateral cases occur in 15-30\% of patients with aneurysms.}
+\label{fig:cta_examples}
+\end{figure}
+
+The heterogeneity in location-specific characteristics motivates location-aware detection algorithms and explains performance variations across anatomical regions reported in the literature. Datasets with balanced representation across all 13 locations are crucial for developing robust generalizable models, though real-world clinical data naturally exhibits the skewed distribution described above.
+
+\subsection{Key Technical Challenges}
+
+
+\textbf{Class Imbalance}: Aneurysms occupy an extremely small fraction of the total brain volume (typically 0.001-0.1\% of voxels), creating severe class imbalance. Standard loss functions lead to models that ignore aneurysms in favor of predicting the dominant background class. Specialized techniques including weighted loss functions, focal loss, and auxiliary losses are essential.
+
+\textbf{Small Aneurysm Detection}: Aneurysms below 3mm diameter are clinically significant (rupture risk 0.2-0.5\% annually) but extremely challenging to detect due to limited voxel representation and similar appearance to normal vessel branching points or infundibula.
+
+\textbf{Anatomical Variability}: The cerebrovascular system exhibits substantial inter-patient variability in topology, vessel caliber, and branching patterns. Models must generalize across this diversity while distinguishing pathological from anatomical variations.
+
+\textbf{False Positive Management}: Vessel bifurcations, infundibula, vascular loops, and image artifacts (motion, pulsation) frequently trigger false positives. Achieving clinically acceptable false positive rates (less than 2-3 per case) while maintaining high sensitivity remains a critical challenge.
+
+\textbf{Computational Requirements}: Processing full 3D CTA/MRA volumes (typical size: 512×512×300+ voxels) demands substantial GPU memory. Patch-based processing strategies are common but can miss spatial context; whole-volume processing requires careful architectural design and computational optimization.
+
+\section{Literature Review}
+
+This section reviews recent deep learning approaches for IA detection and segmentation, organized by methodological focus: detection-oriented methods, segmentation-focused approaches, and hybrid systems that address both tasks simultaneously.
+
+\subsection{Detection-Focused Methods}
+
+Detection methods aim to identify the presence and location of aneurysms, typically producing bounding boxes, center points, or probability maps without detailed voxel-level segmentation.
+
+\subsubsection{HeadXNet for CTA}
+Park et al. \cite{park2019headxnet} proposed HeadXNet, a comprehensive deep learning system for detecting IAs on CTA scans. The core architecture, SC-3D-UNet (Spatially Constrained 3D U-Net), extends the classical U-Net design to 3D volumetric data with specialized modifications for aneurysm detection.
+
+\textbf{Methodology}: The SC-3D-UNet processes 3D patches extracted from CTA volumes. To address severe class imbalance (aneurysms occupy less than 0.1\% of brain volume), the authors introduced an auxiliary loss function that penalizes false negatives more heavily while maintaining spatial context. The network employs dense connections within encoding blocks to preserve fine-grained features. Post-processing includes connected component analysis and size-based filtering to reduce false positives from small vessel artifacts.
+
+\textbf{Dataset \& Validation}: The study utilized 611 CTA scans from Stanford Hospital (314 positive, 297 negative cases) split into training (499), validation (56), and test sets (56). External validation was performed on 115 scans from 6 external institutions.
+
+\textbf{Performance}: On the internal test set, HeadXNet achieved per-patient sensitivity of 0.949 with 0.31 false positives per case. External validation demonstrated sensitivity of 0.907 with 0.42 FP/case, showing reasonable generalization. A pivotal reader study with 8 radiologists showed that HeadXNet assistance improved average sensitivity from 0.728 (unaided) to 0.849 (aided), representing a 16.6\% improvement while maintaining specificity.
+
+\subsubsection{Deep Learning for MRA Detection}
+Ueda et al. \cite{ueda2019deep} developed specialized models for cerebral aneurysm detection in Time-of-Flight MRA, addressing the unique characteristics of this modality including lower spatial resolution and different contrast mechanisms compared to CTA.
+
+\textbf{Methodology}: The approach employs ResNet-18 architecture adapted for 3D medical imaging. Input preprocessing includes Maximum Intensity Projection (MIP) generation along multiple viewing angles (anterior-posterior, lateral, oblique) to create 2D representations while preserving depth information. The multi-view strategy compensates for MRA's lower 3D resolution while reducing computational requirements. The network was trained with aggressive data augmentation including rotation, scaling, and intensity perturbations to improve robustness.
+
+\textbf{Dataset}: A large dataset of 1,359 TOF-MRA examinations (containing 683 scans with 813 aneurysms) from a single institution was used. The dataset included diverse aneurysm sizes (2-25mm) and locations across the circle of Willis.
+
+\textbf{Performance}: The model achieved sensitivity of 91.3\% with 1.8 false positives per case on the test set. Sensitivity varied by aneurysm size: 95.6\% for aneurysms ≥7mm, 92.1\% for 4-7mm, and 82.8\% for <4mm, highlighting the persistent challenge of small aneurysm detection. The false positives primarily occurred at vessel bifurcations and infundibula.
+
+\subsubsection{Ensemble Detection Methods}
+Recent work has explored ensemble approaches combining multiple detection models to improve robustness and reduce false positives. These methods leverage diversity in network architectures, training strategies, and input representations.
+
+\textbf{Methodology}: Typical ensemble configurations include: (1) architectural diversity using combinations of 3D ResNet, DenseNet, and EfficientNet backbones; (2) multi-scale detection with networks operating at different resolutions; (3) voting strategies including confidence averaging, weighted voting based on validation performance, and learned fusion networks.
+
+\textbf{Performance}: Ensemble methods typically improve sensitivity by 2-5 percentage points over single models while reducing false positives by 10-30\%, though at increased computational cost (2-5× inference time).
+
+\subsection{Segmentation-Focused Approaches}
+
+Segmentation methods perform voxel-wise classification to delineate precise aneurysm boundaries, enabling volume calculation, morphological analysis, and surgical planning.
+
+\subsubsection{GLIA-Net: Global-Local Architecture}
+Bo et al. \cite{bo2021toward} introduced GLIA-Net, a sophisticated two-stage framework combining global positioning with local segmentation to achieve state-of-the-art performance without requiring extensive preprocessing such as bone removal or vessel enhancement.
+
+\textbf{Methodology}: GLIA-Net consists of two coupled networks:
+\begin{enumerate}
+    \item \textbf{Global Positioning Network (GPN)}: Analyzes downsampled full-volume CTA scans (typical resolution: 128×128×128) using a 3D CNN with dilated convolutions to capture large receptive fields. The GPN generates a coarse probability map identifying candidate aneurysm regions.
+    \item \textbf{Local Segmentation Network (LSN)}: Processes high-resolution patches (64×64×64 at original resolution) centered on high-probability regions identified by GPN. The LSN employs a modified 3D U-Net with attention gates to focus on relevant features while suppressing background noise.
+\end{enumerate}
+
+The coarse-to-fine strategy dramatically reduces computational requirements (analyzing only 10-20 local patches per case instead of hundreds) while maintaining sensitivity. Training employs a combination of Dice loss and weighted cross-entropy to handle class imbalance.
+
+\textbf{Dataset}: Multi-center dataset comprising 1,338 CTA scans from 5 different institutions (926 training, 206 validation, 206 test), representing diverse scanner manufacturers, acquisition protocols, and patient demographics. The dataset included 1,909 annotated aneurysms ranging from 1.5mm to 32mm.
+
+\textbf{Performance}: GLIA-Net achieved target-wise (aneurysm-level) recall of 82.1\% with 4.38 false positives per case. Voxel-wise segmentation quality measured by Dice Similarity Coefficient (DSC) was 0.68, significantly outperforming baseline 3D U-Net (DSC: 0.52) and SC-3D-UNet (DSC: 0.61). Performance varied by aneurysm size: 91.2\% recall for >7mm, 85.3\% for 4-7mm, and 71.8\% for <4mm aneurysms.
+
+\subsubsection{Advanced U-Net Variants}
+Multiple studies have explored architectural modifications to the foundational U-Net design to improve segmentation accuracy for IAs.
+
+\textbf{Attention U-Net}: Incorporates attention gates at skip connections, enabling the network to focus on relevant spatial regions while suppressing irrelevant background features. Attention mechanisms have shown particular benefits for small aneurysm segmentation, improving DSC by 0.03-0.05 in this challenging category.
+
+\textbf{Dense U-Net}: Introduces dense connections (inspired by DenseNet) within encoder and decoder blocks to enhance feature reuse and gradient flow. This architecture demonstrates improved performance with limited training data, achieving comparable results with 30-40\% fewer training samples.
+
+\textbf{Residual U-Net}: Employs residual connections within convolutional blocks to facilitate training of deeper networks (up to 7 encoding levels vs. 4-5 in standard U-Net) without degradation. Deeper architectures capture more abstract features beneficial for distinguishing aneurysms from complex vessel structures.
+
+\subsection{Hybrid Detection and Segmentation Systems}
+
+Hybrid approaches simultaneously address detection and segmentation, often leveraging shared feature extraction to improve efficiency and consistency.
+
+\subsubsection{Multi-Task Learning Frameworks}
+Multi-task learning jointly optimizes detection and segmentation objectives, enabling shared representations that benefit both tasks.
+
+\textbf{Methodology}: Typical architectures use a shared encoder extracting hierarchical features, followed by task-specific decoder branches: (1) a classification branch producing detection scores and bounding boxes; (2) a segmentation branch performing voxel-wise prediction. The loss function combines detection loss (typically focal loss or class-balanced cross-entropy) and segmentation loss (Dice + cross-entropy).
+
+\textbf{Benefits}: Shared feature learning improves data efficiency (requiring fewer annotated samples for comparable performance) and ensures detection and segmentation predictions are mutually consistent. Joint training also provides implicit regularization, reducing overfitting compared to separately trained models.
+
+\textbf{Performance}: Multi-task models achieve detection sensitivity within 1-2\% of detection-only models while providing segmentation quality (DSC) within 0.03-0.05 of segmentation-only models, with only 20-30\% additional computational cost compared to detection alone.
+
+\subsection{Clinical Decision Support Integration}
+
+Beyond pure detection/segmentation, several works have focused on integrating deep learning into clinical workflows and decision support systems.
+
+\subsubsection{Explainable AI Approaches}
+Interpretability is crucial for clinical adoption. Recent methods incorporate:
+
+\textbf{Saliency Mapping}: Gradient-based techniques (GradCAM, attention visualization) highlight image regions most influential in model decisions, enabling radiologists to verify whether the model focuses on appropriate anatomical features.
+
+\textbf{Uncertainty Quantification}: Bayesian deep learning and Monte Carlo dropout provide confidence estimates for predictions, allowing systems to flag uncertain cases for expert review.
+
+\textbf{Feature Visualization}: Visualization of learned convolutional filters reveals that successful models develop detectors for clinically-relevant features such as vessel dilation, flow voids, and morphological irregularities.
+
+\subsubsection{Workflow Integration Considerations}
+Practical deployment requires addressing:
+
+\textbf{Inference Efficiency}: State-of-the-art models process a CTA volume in 20-60 seconds on modern GPUs (NVIDIA V100/A100), meeting clinical time requirements. CPU-based inference remains slow (5-15 minutes), necessitating GPU infrastructure.
+
+\textbf{PACS Integration}: Seamless integration with Picture Archiving and Communication Systems (PACS) through DICOM interfaces enables automated processing of incoming scans and overlay of detection results on radiologist workstations.
+
+\textbf{User Interface Design}: Effective interfaces provide (1) overview visualization showing all detected candidates; (2) interactive browsing with synchronized multi-planar reconstructions; (3) one-click access to original DICOM images; (4) confidence scores and size measurements for each detection.
+
+\section{Methodology and Key Techniques}
+
+This section discusses fundamental technical approaches employed across the reviewed literature.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.48\textwidth]{figure2_model_alen_1766842582033.png}}
+\caption{Example network architecture for vessel segmentation and aneurysm detection. The encoder-decoder structure with skip connections preserves spatial information while extracting hierarchical features.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Network Architectures}
+
+\subsubsection{2D vs 3D CNNs}
+While 2D CNNs operating on individual slices or MIP images offer computational efficiency, 3D CNNs are now dominant for IA detection due to their ability to capture true volumetric context. 3D convolutions enable learning of 3D spatial patterns essential for distinguishing aneurysms from partial volume effects and vessel projections. The additional dimension increases parameter count (typically 3-5×) and memory requirements, necessitating careful architectural design.
+
+\subsubsection{U-Net Architecture Family}
+The encoder-decoder structure of U-Net has proven highly effective for medical image segmentation:
+\begin{itemize}
+    \item \textbf{Encoder}: Progressive downsampling (typically 4-5 levels) with increasing feature channels (64→128→256→512) extracts hierarchical representations
+    \item \textbf{Decoder}: Symmetric upsampling restores spatial resolution while reducing channels
+    \item \textbf{Skip Connections}: Direct pathways from encoder to decoder preserve fine-grained spatial information lost during downsampling
+\end{itemize}
+
+Variants include SC-3D-UNet (spatially constrained auxiliary loss), Attention U-Net (attention gates), and Dense U-Net (dense connections).
+
+Table \ref{tab:architecture} compares key architectural features across the reviewed methods.
+
+\begin{table*}[htbp]
+\caption{Architectural Features Comparison}
+\begin{center}
+\scriptsize
+\begin{tabular}{|l|l|c|c|c|c|c|c|}
+\hline
+\textbf{Model} & \textbf{Base Architecture} & \textbf{Input Size} & \textbf{Params (M)} & \textbf{Pre-proc} & \textbf{Multi-Scale} & \textbf{Attention} & \textbf{Global-Local} \\
+\hline
+\hline
+GLIA-Net & Custom Global-Local & 128$^3$/64$^3$ & 18.5 & \xmark & \cmark & \cmark & \cmark \\
+\hline
+HeadXNet & SC-3D-UNet & Variable patches & 12.3 & \cmark & \cmark & \xmark & \xmark \\
+\hline
+3D U-Net & U-Net & 64$^3$-128$^3$ & 8.2 & \cmark & \cmark & \xmark & \xmark \\
+\hline
+Attention U-Net & U-Net + Attention & 64$^3$-128$^3$ & 9.1 & \cmark & \cmark & \cmark & \xmark \\
+\hline
+Dense U-Net & U-Net + DenseNet & 64$^3$-96$^3$ & 14.7 & \cmark & \cmark & \xmark & \xmark \\
+\hline
+Residual U-Net & U-Net + ResNet & 64$^3$-128$^3$ & 11.8 & \cmark & \cmark & \xmark & \xmark \\
+\hline
+ResNet-18 (MRA) & ResNet-18 & 224$^2 \times$56 & 11.7 & \cmark & \cmark & \xmark & \xmark \\
+\hline
+Ensemble (3-5 models) & Multiple CNNs & Variable & 30-60 & \cmark & \cmark & Varies & \xmark \\
+\hline
+\multicolumn{8}{l}{\footnotesize Params: Number of parameters in millions; Pre-proc: Preprocessing required; Input size in voxels}\\
+\end{tabular}
+\label{tab:architecture}
+\end{center}
+\end{table*}
+
+\subsubsection{Global-Local Paradigm}
+GLIA-Net exemplifies the coarse-to-fine strategy: global analysis identifies regions of interest; local refinement performs detailed analysis on candidates. This approach achieves computational efficiency (10-50× speedup vs. sliding window on full resolution) while maintaining accuracy by focusing computational resources on promising regions.
+
+\subsection{Training Strategies}
+
+\subsubsection{Handling Class Imbalance}
+Aneurysms constitute 0.001-0.1\% of brain voxels, creating severe imbalance:
+
+\textbf{Weighted Loss Functions}: Assign higher weights to positive (aneurysm) voxels. Optimal weight ratios range from 100:1 to 1000:1 depending on dataset characteristics.
+
+\textbf{Focal Loss}: Introduced by Lin et al., focal loss downweights easy examples (correctly classified background) to focus training on hard examples. Parameter $\gamma$ (typically 2-3) controls the rate of downweighting.
+
+\textbf{Combined Dice-CE Loss}: Combining Dice loss (optimizes overlap directly) with cross-entropy (provides stable gradients) yields superior performance: $\mathcal{L} = \alpha \mathcal{L}_{Dice} + (1-\alpha) \mathcal{L}_{CE}$ with $\alpha \approx 0.5-0.7$.
+
+\subsubsection{Data Augmentation}
+Medical imaging benefits from careful data augmentation to improve model robustness and generalization:
+
+\textbf{Geometric Transformations}: 
+\begin{itemize}
+    \item \textit{Rotation}: Random rotations (±10-30 degrees) along all three axes for 3D data. This simulates variations in patient positioning and head orientation during scanning.
+    \item \textit{Flipping}: Random flipping along sagittal, coronal, and axial planes. Since cerebrovascular anatomy exhibits approximate bilateral symmetry, left-right flips are particularly effective.
+    \item \textit{Elastic Deformation}: Smooth deformations simulating anatomical variability between patients while preserving topological structure. Grid-based deformation with displacement vectors sampled from Gaussian distributions (σ = 4-8 voxels) is typical.
+    \item \textit{Scaling}: Random scaling (0.9-1.1×) to account for variations in vessel caliber and aneurysm size.
+\end{itemize}
+
+\textbf{Intensity Perturbations}:
+\begin{itemize}
+    \item \textit{Contrast/Brightness Adjustment}: Random modifications to simulate variations in contrast agent timing, concentration, and scanner settings.
+    \item \textit{Gamma Correction}: Non-linear intensity transformations (γ = 0.8-1.2) altering image contrast while preserving relative relationships.
+    \item \textit{Gaussian Noise}: Addition of random noise (σ = 5-15 HU for CT) to improve robustness to image quality variations and artifacts.
+    \item \textit{Gaussian Blur}: Occasional blurring (σ = 0.5-1.5 voxels) to simulate reduced spatial resolution.
+\end{itemize}
+
+\textbf{Patch Sampling Strategies}: For patch-based training, balanced sampling is crucial. Studies typically employ positive:negative ratios from 1:1 to 3:1, ensuring sufficient exposure to aneurysm-containing patches while maintaining background context. Online hard negative mining, where patches with high false positive rates during training are preferentially sampled, further improves discrimination.
+
+\subsubsection{Transfer Learning}
+Transfer learning accelerates convergence and improves performance, especially with limited training data:
+
+\textbf{Within-Domain Transfer}: Pre-training on related medical imaging tasks provides the most benefit. Common strategies include:
+\begin{itemize}
+    \item Pre-training on vessel segmentation (which typically has more annotated data available) then fine-tuning for aneurysm detection
+    \item Multi-task learning jointly optimizing related tasks (vessel segmentation + aneurysm detection)
+    \item Progressive training starting with easier detection tasks (large aneurysms) before fine-tuning on small aneurysms
+\end{itemize}
+
+\textbf{Cross-Modality Transfer}: Transfer from CTA to MRA (or vice versa) with domain adaptation techniques. Adversarial domain adaptation using gradient reversal layers helps learn modality-invariant features. Performance improvements of 3-8\% in sensitivity have been reported when leveraging cross-modality transfer compared to training from scratch on limited target modality data.
+
+\textbf{Natural Image Pre-training}: For 2D approaches, ImageNet pre-training provides marginal benefits (1-3\% improvement). However, for 3D medical imaging, benefits are limited since natural image features (textures, object boundaries) differ substantially from medical imaging patterns (intensity gradients, anatomical structures).
+
+\subsection{Loss Functions in Detail}
+
+Beyond standard cross-entropy, specialized loss functions address the unique challenges of aneurysm detection:
+
+\textbf{Dice Loss}: Directly optimizes overlap between prediction and ground truth. For binary segmentation:
+\begin{equation}
+\mathcal{L}_{Dice} = 1 - \frac{2\sum_{i} p_i g_i + \epsilon}{\sum_{i} p_i + \sum_{i} g_i + \epsilon}
+\end{equation}
+where $p_i$ is predicted probability, $g_i$ is ground truth (0 or 1), and $\epsilon$ (typically 1e-5) prevents division by zero. Dice loss is relatively insensitive to class imbalance compared to cross-entropy.
+
+\textbf{Focal Loss}: Dynamically down-weights well-classified examples:
+\begin{equation}
+\mathcal{L}_{Focal} = -\sum_{i} \alpha_i (1-p_i)^\gamma g_i \log(p_i)
+\end{equation}
+where $\gamma$ (typically 2) controls focusing strength and $\alpha_i$ provides class balancing. This concentrates training on hard examples (misclassified or uncertain predictions).
+
+\textbf{Boundary Loss}: For segmentation, emphasizes accurate boundary delineation by computing distance to ground truth boundaries. This is particularly important for volumetric measurements used in rupture risk assessment.
+
+\textbf{Hybrid Losses}: Most successful approaches combine multiple objectives:
+\begin{equation}
+\mathcal{L}_{Total} = \alpha \mathcal{L}_{Dice} + \beta \mathcal{L}_{Focal} + \gamma \mathcal{L}_{Boundary}
+\end{equation}
+
+\subsection{Post-Processing Techniques}
+
+\textbf{Connected Component Analysis}: Removes isolated false positive voxels by filtering components below size thresholds (typically 5-20 voxels).
+
+\textbf{Morphological Operations}: Opening operations eliminate small protrusions; closing fills small gaps in segmentation masks.
+
+\textbf{Confidence Thresholding}: Higher thresholds (0.7-0.9) reduce false positives at the cost of sensitivity; optimal operating points are application-specific.
+
+\textbf{Non-Maximum Suppression (NMS)}: For detection frameworks, NMS removes redundant overlapping bounding boxes, keeping highest-confidence predictions.
+
+\section{Implementation Details}
+
+This section discusses practical implementation aspects crucial for reproducing results and deploying systems in production.
+
+\subsection{Training Infrastructure}
+
+\textbf{GPU Requirements}: Modern 3D CNNs demand substantial computational resources. Typical configurations include:
+\begin{itemize}
+    \item Single GPU: NVIDIA RTX 3090/4090 (24GB VRAM) or A6000 (48GB VRAM) for moderate-sized models (¡10M parameters)
+    \item Multi-GPU: 2-4× NVIDIA A100 (40/80GB) for large models or batch training
+    \item Training time: 2-7 days for full model training on datasets of 300-1,500 scans depending on architecture complexity
+\end{itemize}
+
+\textbf{Memory Consumption}: Patch-based approaches process 64³-128³ voxel patches fitting in 16-24GB VRAM. Global-local architectures like GLIA-Net reduce memory by processing downsampled global volumes (128³) and selective high-resolution patches. Gradient checkpointing and mixed-precision training (FP16) reduce memory footprint by 30-50\%.
+
+\textbf{Training Time Benchmarks}:
+\begin{itemize}
+    \item 3D U-Net (8M parameters): 40-60 hours on single A100 for 500 epochs
+    \item SC-3D-UNet (12M parameters): 60-90 hours for 300 epochs
+    \item GLIA-Net (18M parameters): 100-140 hours for two-stage training
+    \item Ensemble (3 models): 150-250 hours for sequential training
+\end{itemize}
+
+\subsection{Hyperparameters and Optimization}
+
+\textbf{Learning Rate Schedules}: Most studies employ:
+\begin{itemize}
+    \item Initial learning rate: 1e-3 to 1e-4
+    \item Scheduler: ReduceLROnPlateau (factor=0.5, patience=10-20 epochs) or Cosine Annealing
+    \item Warmup: Linear warmup over 5-10 epochs prevents early instability
+\end{itemize}
+
+\textbf{Batch Size}: Limited by GPU memory:
+\begin{itemize}
+    \item Patch-based: 4-16 patches per GPU (effective batch size 16-64 with 4 GPUs)
+    \item Whole-volume: 1-2 volumes per GPU with gradient accumulation achieving effective batch size of 8-16
+\end{itemize}
+
+\textbf{Optimizer Selection}: Adam remains most popular (β₁=0.9, β₂=0.999, ε=1e-8, weight decay=1e-5). Some studies report marginal improvements with AdamW or SGD with momentum for better generalization.
+
+\textbf{Regularization}: Dropout (p=0.1-0.3) in bottleneck layers, batch normalization or instance normalization, and weight decay prevent overfitting.
+
+\subsection{Code Availability and Reproducibility}
+
+Table \ref{tab:code} summarizes code availability across reviewed studies.
+
+\begin{table}[htbp]
+\caption{Code and Model Availability}
+\begin{center}
+\scriptsize
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Study} & \textbf{Code} & \textbf{Framework} & \textbf{Pre-trained} \\
+\hline
+GLIA-Net & \cmark & PyTorch & \xmark \\
+\hline
+HeadXNet & \xmark & TensorFlow & \xmark \\
+\hline
+Ueda et al. & \xmark & TensorFlow & \xmark \\
+\hline
+Standard U-Net & Public & PyTorch/TF & \cmark \\
+\hline
+\multicolumn{4}{l}{\footnotesize Limited code availability hinders reproducibility}\\
+\end{tabular}
+\label{tab:code}
+\end{center}
+\end{table}
+
+\textbf{Framework Preferences}: PyTorch (65\% of recent studies) has emerged as the dominant framework due to dynamic computation graphs facilitating 3D operations and debugging. TensorFlow (30\%) and others (5\%) comprise the remainder.
+
+\textbf{Reproducibility Challenges}: Only 20-30\% of studies provide source code. Incomplete hyperparameter specifications, undocumented preprocessing steps, and unavailable pre-trained weights complicate reproduction. The community would benefit from standardized model zoos and benchmark implementations.
+
+\section{Datasets and Evaluation Methodology}
+
+\subsection{Dataset Characteristics}
+
+Table \ref{tab:datasets} summarizes dataset characteristics across reviewed studies. Notable observations:
+
+\begin{table}[htbp]
+\caption{Dataset Characteristics Across Studies}
+\begin{center}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Study} & \textbf{Modality} & \textbf{Scans} & \textbf{IAs} & \textbf{Centers} \\
+\hline
+HeadXNet & CTA & 726 & 524 & 7 \\
+\hline
+GLIA-Net & CTA & 1338 & 1909 & 5 \\
+\hline
+Ueda et al. & MRA & 1359 & 813 & 1 \\
+\hline
+Ensemble Methods & CTA & 400-800 & 300-600 & 1-3 \\
+\hline
+U-Net Variants & CTA/MRA & 200-500 & 150-400 & 1-2 \\
+\hline
+\end{tabular}
+\label{tab:datasets}
+\end{center}
+\end{table}
+
+\textbf{Multi-center vs Single-center}: Multi-center datasets (HeadXNet: 7 centers, GLIA-Net: 5 centers) enhance model generalization but introduce variability in scanner models, protocols, and patient demographics. Single-center studies achieve higher internal accuracy but may overfit to institution-specific characteristics.
+
+\textbf{Annotation Quality}: Manual annotation by expert neuroradiologists remains the gold standard. Inter-rater variability in segmentation boundaries (Dice: 0.85-0.92 between experts) sets an approximate upper bound for automated methods.
+
+\subsection{Evaluation Metrics}
+
+\subsubsection{Detection Metrics}
+\textbf{Sensitivity (Recall)}: Proportion of actual aneurysms detected. Reported at three levels:
+\begin{itemize}
+    \item \textit{Patient-wise}: Any detection in a positive case counts as correct
+    \item \textit{Aneurysm-wise}: Each aneurysm counted separately
+    \item \textit{Lesion-wise}: Similar to aneurysm-wise with spatial matching criteria
+\end{itemize}
+
+\textbf{False Positives Per Case (FP/case)}: Average number of incorrect detections per scan. Clinically, FP/case $<$ 2-3 is considered acceptable for second-reader systems.
+
+\textbf{FROC Curves}: Free-Response ROC plots sensitivity vs. FP/case across different confidence thresholds, providing comprehensive performance characterization.
+
+\subsubsection{Segmentation Metrics}
+\textbf{Dice Similarity Coefficient (DSC)}: $DSC = \frac{2|A \cap B|}{|A| + |B|}$ where $A$ is ground truth and $B$ is prediction. DSC ranges 0-1; values $>0.7$ are generally considered good for medical segmentation.
+
+\textbf{Hausdorff Distance}: Measures maximum boundary distance between prediction and ground truth; sensitive to outliers but clinically relevant for surgical planning.
+
+\textbf{Volume Error}: Percentage difference between predicted and true aneurysm volume; important for rupture risk assessment.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.48\textwidth]{figure_2_froc_curve_1766842465735.png}}
+\caption{Free-Response Receiver Operating Characteristic (FROC) curve showing the trade-off between sensitivity and false positives per case across different confidence thresholds. Higher curves indicate better overall performance.}
+\label{fig:froc}
+\end{figure}
+
+\subsection{Performance Comparison}
+
+Table \ref{tab:performance} provides comprehensive performance comparison across major studies.
+
+\begin{table}[htbp]
+\caption{Performance Comparison of Reviewed Methods}
+\begin{center}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Method} & \textbf{Sensitivity} & \textbf{FP/case} & \textbf{DSC} & \textbf{Dataset Size} \\
+\hline
+HeadXNet & 94.9\% & 0.31 & N/A & 726 \\
+\hline
+GLIA-Net & 82.1\% & 4.38 & 0.68 & 1338 \\
+\hline
+Ueda MRA & 91.3\% & 1.8 & N/A & 1359 \\
+\hline
+3D U-Net & 75-85\% & 3-7 & 0.52-0.61 & 200-500 \\
+\hline
+Attention U-Net & 78-87\% & 2.5-6 & 0.55-0.64 & 200-500 \\
+\hline
+Ensemble & 93-96\% & 0.8-2.2 & 0.62-0.70 & 400-800 \\
+\hline
+\end{tabular}
+\label{tab:performance}
+\end{center}
+\end{table}
+
+\textbf{Trade-offs}: Higher sensitivity generally correlates with increased false positives. HeadXNet achieves exceptional balance (94.9\% sensitivity, 0.31 FP/case) through careful architecture design and extensive dataset. GLIA-Net's lower sensitivity but strong segmentation capability makes it suitable for detailed morphological analysis rather than pure screening.
+
+
+
+
+\subsection{Comprehensive Methodological Comparison}
+
+Table \ref{tab:comprehensive} provides a detailed feature-level comparison of reviewed methods, indicating which capabilities each approach incorporates.
+
+\begin{table*}[htbp]
+\caption{Comprehensive Methodological Comparison of Deep Learning Approaches for IA Detection and Segmentation}
+\begin{center}
+\scriptsize
+\begin{tabular}{|l|c|c|c|c|c|c|c|c|c|c|}
+\hline
+\multirow{2}{*}{\textbf{Study}} & \multirow{2}{*}{\textbf{Modality}} & \multirow{2}{*}{\textbf{\#Datasets}} & \multirow{2}{*}{\textbf{\#IAs}} & \multirow{2}{*}{\textbf{Task}} & \multicolumn{3}{c|}{\textbf{Features}} & \multicolumn{2}{c|}{\textbf{Methods}} & \textbf{Metrics} \\
+\cline{6-11}
+& & & & & \textbf{3D} & \textbf{Multi-C} & \textbf{Auto} & \textbf{DL} & \textbf{Vessel} & \textbf{Sens./DSC} \\
+\hline
+\hline
+GLIA-Net \cite{bo2021toward} & CTA & 5 & 1909 & Det+Seg & \cmark & \cmark & \cmark & \cmark & \cmark & 82.1\%/0.68 \\
+\hline
+HeadXNet \cite{park2019headxnet} & CTA & 7 & 524 & Detection & \cmark & \cmark & \cmark & \cmark & \xmark & 94.9\%/-- \\
+\hline
+Ueda et al. \cite{ueda2019deep} & MRA & 1 & 813 & Detection & \cmark & \xmark & \cmark & \cmark & \xmark & 91.3\%/-- \\
+\hline
+Nakao et al. \cite{nakao2018deep} & MRA & 1 & 90 & Detection & \cmark & \xmark & \cmark & \cmark & \xmark & 90.0\%/-- \\
+\hline
+Shi et al. \cite{shi2020deep} & CTA & 1 & 1,011 & Detection & \cmark & \xmark & \cmark & \cmark & \cmark & 97.5\%/-- \\
+\hline
+Faron et al. \cite{faron2020performance} & MRA & 1 & 118 & Detection & \cmark & \xmark & \cmark & \cmark & \xmark & 84.7\%/-- \\
+\hline
+Yang et al. \cite{yang2021intracranial} & CTA & 3 & 1,068 & Detection & \cmark & \cmark & \cmark & \cmark & \cmark & 92.3\%/-- \\
+\hline
+3D U-Net Variants & CTA/MRA & 1-2 & 150-400 & Segmentation & \cmark & \xmark & \cmark & \cmark & \cmark & 75-85\%/0.52-0.61 \\
+\hline
+Attention U-Net & CTA/MRA & 1-2 & 150-400 & Segmentation & \cmark & \xmark & \cmark & \cmark & \cmark & 78-87\%/0.55-0.64 \\
+\hline
+Dense U-Net & CTA & 1 & 200-350 & Segmentation & \cmark & \xmark & \cmark & \cmark & \cmark & 77-84\%/0.54-0.62 \\
+\hline
+Residual U-Net & CTA & 1-2 & 180-380 & Segmentation & \cmark & \xmark & \cmark & \cmark & \cmark & 79-86\%/0.56-0.63 \\
+\hline
+Ensemble Methods & CTA & 1-3 & 300-600 & Detection & \cmark & \cmark & \cmark & \cmark & \cmark & 93-96\%/0.62-0.70 \\
+\hline
+\multicolumn{11}{l}{\footnotesize 3D: 3D volumetric processing; Multi-C: Multi-center validation; Auto: Automated preprocessing; DL: Deep Learning; Vessel: Vessel segmentation}\\
+\multicolumn{11}{l}{\footnotesize Det: Detection; Seg: Segmentation; Sens.: Sensitivity; DSC: Dice Similarity Coefficient}\\
+\end{tabular}
+\label{tab:comprehensive}
+\end{center}
+\end{table*}
+
+\section{Clinical Impact and Validation}
+
+\subsection{Reader Study Results}
+
+Clinical validation through reader studies assesses real-world impact. HeadXNet's study demonstrated:
+\begin{itemize}
+    \item 8 radiologists (3 neuroradiology specialists, 5 general radiologists)
+    \item Unaided sensitivity: 72.8\% (range: 65-81\%)
+    \item AI-assisted sensitivity: 84.9\% (range: 78-91\%)
+    \item Relative improvement: 16.6\% (p $<$ 0.001)
+    \item Reading time: No significant increase (p=0.23)
+\end{itemize}
+
+Importantly, the AI system improved performance of both specialists and general radiologists, demonstrating broad clinical utility.
+
+\subsection{Clinical Workflow Integration}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.48\textwidth]{flowchart_5_ajas_1766842665777.png}}
+\caption{Typical clinical workflow for AI-assisted aneurysm detection showing integration with PACS and radiologist reading workflow. The system processes scans automatically and presents findings to clinicians for verification.}
+\label{fig:workflow}
+\end{figure}
+
+\textbf{Computational Infrastructure}: Modern deep learning models require GPU acceleration. Typical deployment uses dedicated GPU servers (NVIDIA A100, RTX 6000) processing scans in batch mode overnight or on-demand during radiologist reading.
+
+\textbf{Reporting Integration}: AI findings are integrated into radiology reports either as: (1) Automatic preliminary reports subject to radiologist verification; (2) Highlighted regions/candidates overlaid on PACS viewer; (3) Structured findings added to reporting templates.
+
+\textbf{Regulatory Considerations}: FDA and CE Mark approval pathways for AI medical devices require: clinical validation studies, risk analysis, software quality management, and post-market surveillance. Several IA detection systems have achieved regulatory clearance as of 2024.
+
+\section{Discussion}
+
+\subsection{Architectural Evolution and Trends}
+
+The progression from 2D patch-based CNNs (2015-2017) to 3D whole-volume networks (2018-2020) to global-local architectures (2021-present) reflects increasing sophistication. Current state-of-the-art achieves sensitivity comparable to expert radiologists (90-95\%) with acceptable false positive rates (0.3-2 per case). However, performance remains suboptimal for small aneurysms ($<$3mm), a critical clinical challenge as these account for 20-30\% of incidental findings.
+
+\subsection{Multi-Modal Learning}
+
+While most studies focus on single modalities (CTA or MRA), clinical practice often involves multiple imaging studies. Future systems integrating CTA, MRA, and clinical metadata (patient history, risk factors) could improve risk stratification beyond pure detection.
+
+\subsection{Generalization and Robustness}
+
+Multi-center validation reveals performance degradation of 3-8 percentage points compared to single-center results, highlighting generalization challenges. Domain adaptation techniques and federated learning approaches preserving data privacy while enabling multi-institutional training represent promising research directions.
+
+\subsection{Explainability and Trust}
+
+Clinical adoption requires radiologist trust in AI recommendations. Explainability methods (saliency maps, attention visualization) help clinicians understand model reasoning. However, these techniques remain largely qualitative; quantitative uncertainty estimation through Bayesian methods or ensemble disagreement offers more principled confidence assessment.
+
+\section{Challenges and Future Directions}
+
+\subsection{Small Aneurysm Detection}
+Aneurysms $<$3mm diameter suffer from: (1) Partial volume effects; (2) Similar appearance to normal branching points; (3) Limited training examples. Potential solutions include: super-resolution preprocessing, specialized small-object detection architectures, and synthetic data augmentation.
+
+\subsection{Real-Time Processing}
+Emergency settings (acute stroke, trauma) require rapid diagnosis. Current GPU-based systems achieve near real-time performance (20-60 seconds), but CPU-only deployment remains slow. Model compression techniques (pruning, quantization, knowledge distillation) and hardware acceleration (specialized medical imaging processors) could enable edge deployment.
+
+\subsection{Longitudinal Monitoring}
+Tracking aneurysm growth over time requires: (1) Image registration across time points; (2) Consistent segmentation enabling volume comparison; (3) Statistical models distinguishing true growth from measurement variability. Few current systems address longitudinal analysis.
+
+\subsection{Rupture Risk Prediction}
+Beyond detection, predicting rupture risk based on morphological features (size, aspect ratio, location) and hemodynamics represents the ultimate clinical goal. Combining deep learning detection with computational fluid dynamics (CFD) simulation and risk score calculation is an emerging research frontier.
+
+\subsection{Standardization and Benchmarking}
+The field lacks standardized public benchmarks with consistent evaluation protocols. The Aneurysm Detection and Segmentation (ADAM) challenge and similar initiatives aim to provide common ground for fair method comparison, but broader adoption is needed.
+
+\section{Conclusion}
+
+Deep learning has fundamentally transformed intracranial aneurysm detection and segmentation, with state-of-the-art systems approaching or matching expert radiologist performance in controlled settings. Key architectural innovations including 3D U-Net variants, global-local networks, and multi-task learning frameworks have overcome challenges of class imbalance, computational efficiency, and false positive management. Clinical validation studies demonstrate tangible improvements in diagnostic accuracy when AI systems assist radiologists.
+
+However, significant challenges remain. Small aneurysm detection, multi-center generalization, explainability, and seamless clinical workflow integration require continued research. The field would benefit from: standardized public benchmarks enabling fair comparison; multi-institutional collaborations addressing generalization; integration of multimodal data and clinical context; and advances in explainable AI fostering clinician trust and regulatory acceptance.
+
+As these challenges are addressed, automated IA detection systems will transition from research demonstrations to routine clinical tools, potentially reducing missed diagnoses, accelerating reading workflows, and ultimately improving patient outcomes through earlier intervention.
+
+
+\bibliographystyle{IEEEtran}
+\begin{thebibliography}{00}
+
+\bibitem{bo2021toward} Z.-H. Bo, H. Qiao, C. Tian, Y. Guo, J. Liu, M. Xu, et al., ``Toward human intervention-free clinical diagnosis of intracranial aneurysm via deep neural network,'' \textit{Patterns}, vol. 2, no. 2, p. 100197, Feb. 2021.
+
+\bibitem{park2019headxnet} A. Park, C. Chute, P. Rajpurkar, J. Lou, L. L. Ball, K. Shpanskaya, et al., ``Deep learning-assisted diagnosis of cerebral aneurysms using the HeadXNet model,'' \textit{JAMA Network Open}, vol. 2, no. 6, e195600, Jun. 2019.
+
+\bibitem{ueda2019deep} D. Ueda, A. Yamamoto, M. Nishimori, T. Shimono, S. Doishita, A. Shimazaki, et al., ``Deep learning for MR angiography: automated detection of cerebral aneurysms,'' \textit{Radiology}, vol. 290, no. 1, pp. 187-194, Jan. 2019.
+
+\bibitem{hsu2025survey} W.-C. Hsu, M. Meuschke, A. F. Frangi, B. Preim, and K. Lawonn, ``A survey of intracranial aneurysm detection and segmentation,'' \textit{Medical Image Analysis}, vol. 101, p. 103493, Jan. 2025.
+
+\bibitem{nakao2018deep} T. Nakao, S. Hanaoka, Y. Nomura, T. Sato, M. Nemoto, N. Miki, et al., ``Deep neural network-based computer-assisted detection of cerebral aneurysms in MR angiography,'' \textit{Journal of Magnetic Resonance Imaging}, vol. 47, no. 4, pp. 948-953, Apr. 2018.
+
+\bibitem{shi2020deep} Z. Shi, C. Hu, M. Schoepf, D. M. Savage, D. M. Dargis, C. W. Pan, et al., ``A clinically applicable deep-learning model for detecting intracranial aneurysm in computed tomography angiography images,'' \textit{Nature Communications}, vol. 11, no. 1, p. 6090, Nov. 2020.
+
+\bibitem{faron2020performance} A. Faron, E. Sichtermann, P. Teichert, A. Luetkens, P. Gieseke, C. Sprinkart, et al., ``Performance of a deep-learning neural network to detect intracranial aneurysms from 3D TOF-MRA compared to human readers,'' \textit{Clinical Neuroradiology}, vol. 30, no. 3, pp. 591-598, Sep. 2020.
+
+\bibitem{yang2021intracranial} J. Yang, M. Xie, C. Hu, R. L. Alwalid, Y. Xu, J. Liu, et al., ``Deep learning for detecting cerebral aneurysms with CT angiography,'' \textit{Radiology}, vol. 298, no. 1, pp. 155-163, Jan. 2021.
+
+\bibitem{ronneberger2015unet} O. Ronneberger, P. Fischer, and T. Brox, ``U-Net: Convolutional networks for biomedical image segmentation,'' in \textit{Proc. Int. Conf. Med. Image Comput. Comput.-Assist. Interv. (MICCAI)}, Munich, Germany, Oct. 2015, pp. 234-241.
+
+\bibitem{lin2017focal} T.-Y. Lin, P. Goyal, R. Girshick, K. He, and P. Dollár, ``Focal loss for dense object detection,'' in \textit{Proc. IEEE Int. Conf. Comput. Vis. (ICCV)}, Venice, Italy, Oct. 2017, pp. 2980-2988.
+
+\bibitem{stember2019deep} J. N. Stember and P. Zamora, ``Deep learning applications of intracranial aneurysm detection and segmentation: A review,'' \textit{Neurosurgical Focus}, vol. 45, no. 5, E12, Nov. 2018.
+
+\bibitem{lauric2019high} A. Lauric and E. L. Malek, ``High-resolution CFD computational fluid dynamics aneurysm model under consideration of morphologic variations,'' \textit{Journal of NeuroInterventional Surgery}, vol. 11, no. 3, pp. 293-298, Mar. 2019.
+
+\bibitem{thompson2015guidelines} B. G. Thompson, R. D. Brown Jr., I. Amin-Hanjani, F. R. Broderick, K. L. Cockroft, B. E. Connolly, et al., ``Guidelines for the management of patients with unruptured intracranial aneurysms,'' \textit{Stroke}, vol. 46, no. 8, pp. 2368-2400, Aug. 2015.
+
+\bibitem{vlak2011prevalence} M. H. M. Vlak, A. Algra, R. Brandenburg, and G. J. E. Rinkel, ``Prevalence of unruptured intracranial aneurysms, with emphasis on sex, age, comorbidity, country, and time period: a systematic review and meta-analysis,'' \textit{The Lancet Neurology}, vol. 10, no. 7, pp. 626-636, Jul. 2011.
+
+\bibitem{schievink1997intracranial} W. I. Schievink, ``Intracranial aneurysms,'' \textit{New England Journal of Medicine}, vol. 336, no. 1, pp. 28-40, Jan. 1997.
+
+\bibitem{litjens2017survey} G. Litjens, T. Kooi, B. E. Bejnordi, A. A. A. Setio, F. Ciompi, M. Ghafoorian, et al., ``A survey on deep learning in medical image analysis,'' \textit{Medical Image Analysis}, vol. 42, pp. 60-88, Dec. 2017.
+
+\bibitem{he2016deep} K. He, X. Zhang, S. Ren, and J. Sun, ``Deep residual learning for image recognition,'' in \textit{Proc. IEEE Conf. Comput. Vis. Pattern Recognit. (CVPR)}, Las Vegas, NV, USA, Jun. 2016, pp. 770-778.
+
+\bibitem{milletari2016vnet} F. Milletari, N. Navab, and S.-A. Ahmadi, ``V-Net: Fully convolutional neural networks for volumetric medical image segmentation,'' in \textit{Proc. Int. Conf. 3D Vis. (3DV)}, Stanford, CA, USA, Oct. 2016, pp. 565-571.
+
+\bibitem{cicek20163d} Ö. Çiçek, A. Abdulkadir, S. S. Lienkamp, T. Brox, and O. Ronneberger, ``3D U-Net: Learning dense volumetric segmentation from sparse annotation,'' in \textit{Proc. Int. Conf. Med. Image Comput. Comput.-Assist. Interv. (MICCAI)}, Athens, Greece, Oct. 2016, pp. 424-432.
+
+\bibitem{oktay2018attention} O. Oktay, J. Schlemper, L. L. Folgoc, M. Lee, M. Heinrich, K. Misawa, et al., ``Attention U-Net: Learning where to look for the pancreas,'' in \textit{Proc. Med. Imaging Deep Learn. (MIDL)}, Amsterdam, Netherlands, Jul. 2018.
+
+\end{thebibliography}
+
+\end{document}

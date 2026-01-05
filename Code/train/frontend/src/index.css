@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+@layer base {
+  * {
+    @apply border-surface-700;
+  }
+
+  body {
+    @apply bg-surface-950 text-surface-100;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-700 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-600;
+  }
+}
+
+/* Component styles */
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 
+           focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-950;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-500 
+           focus:ring-primary-500 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface-800 text-surface-100 hover:bg-surface-700 
+           focus:ring-surface-500 border border-surface-600;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-300 hover:bg-surface-800 
+           hover:text-white;
+  }
+
+  .card {
+    @apply bg-surface-900/50 backdrop-blur-sm border border-surface-800 
+           rounded-2xl overflow-hidden;
+  }
+
+  .glass {
+    @apply bg-surface-950/80 backdrop-blur-xl border border-surface-800/50;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-400 via-accent-400 to-primary-400 
+           bg-clip-text text-transparent animate-pulse-slow;
+  }
+
+  .input {
+    @apply w-full px-4 py-3 bg-surface-800 border border-surface-700 rounded-xl
+           text-surface-100 placeholder-surface-500 focus:outline-none 
+           focus:ring-2 focus:ring-primary-500 focus:border-transparent
+           transition-all duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-risk-low/20 text-risk-low;
+  }
+
+  .badge-warning {
+    @apply badge bg-risk-moderate/20 text-risk-moderate;
+  }
+
+  .badge-danger {
+    @apply badge bg-risk-high/20 text-risk-high;
+  }
+}
+
+/* Animations */
+@layer utilities {
+  .animate-gradient {
+    background-size: 200% 200%;
+    animation: gradient 8s ease infinite;
+  }
+
+  @keyframes gradient {
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  /* 3D Transform for cards */
+  .perspective {
+    perspective: 1000px;
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 20px theme('colors.primary.500 / 30%'),
+                0 0 40px theme('colors.primary.500 / 20%');
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px theme('colors.accent.500 / 30%'),
+                0 0 40px theme('colors.accent.500 / 20%');
+  }
+
+  /* Mesh gradient background */
+  .mesh-gradient {
+    background: 
+      radial-gradient(at 40% 20%, theme('colors.primary.900 / 40%') 0px, transparent 50%),
+      radial-gradient(at 80% 0%, theme('colors.accent.900 / 30%') 0px, transparent 50%),
+      radial-gradient(at 0% 50%, theme('colors.primary.900 / 30%') 0px, transparent 50%),
+      radial-gradient(at 80% 50%, theme('colors.accent.900 / 20%') 0px, transparent 50%),
+      radial-gradient(at 0% 100%, theme('colors.primary.900 / 40%') 0px, transparent 50%);
+  }
+}
