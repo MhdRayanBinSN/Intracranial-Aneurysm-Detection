@@ -1,0 +1,14 @@
+# MedGemma Dependencies
+# COMPATIBLE with PyTorch 2.1.2+cu118 (your aneurysm env)
+
+# Use older transformers version compatible with PyTorch 2.1.x
+# transformers 5.x requires PyTorch 2.4+ (INCOMPATIBLE!)
+transformers==4.38.2        # Last version supporting PyTorch 2.1.x
+accelerate==0.27.2          # Compatible with transformers 4.38.x
+
+# Already installed in your aneurysm env (DO NOT reinstall):
+# torch==2.1.2+cu118  ✓
+# numpy==1.26.4       ✓
+# Pillow==12.0.0      ✓
+# pydicom==3.0.1      ✓
+# tqdm==4.67.1        ✓

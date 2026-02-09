@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedGemma Dashboard - Aneurysm Detection</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🏥</span>
+                    <span class="logo-text">MedGemma</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-page="overview">
+                    <span class="nav-icon">📊</span>
+                    <span>Overview</span>
+                </a>
+                <a href="#" class="nav-item" data-page="analyze">
+                    <span class="nav-icon">🔬</span>
+                    <span>Analyze</span>
+                </a>
+                <a href="#" class="nav-item" data-page="results">
+                    <span class="nav-icon">📋</span>
+                    <span>Results</span>
+                </a>
+                <a href="#" class="nav-item" data-page="compare">
+                    <span class="nav-icon">⚡</span>
+                    <span>Compare Models</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="model-status">
+                    <span class="status-dot online"></span>
+                    <span>Models Ready</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="content-header">
+                <div class="header-left">
+                    <h1 id="page-title">Dashboard Overview</h1>
+                    <p class="breadcrumb">Dashboard / <span id="current-page">Overview</span></p>
+                </div>
+                <div class="header-right">
+                    <button class="btn btn-primary" id="new-analysis-btn">
+                        <span>+ New Analysis</span>
+                    </button>
+                </div>
+            </header>
+            
+            <!-- Page: Overview -->
+            <section class="page active" id="page-overview">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon medgemma">🧠</div>
+                        <div class="stat-info">
+                            <h3>MedGemma</h3>
+                            <p>Google's Medical AI</p>
+                        </div>
+                        <div class="stat-status online">Ready</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon resnet">🎯</div>
+                        <div class="stat-info">
+                            <h3>3D ResNet</h3>
+                            <p>Trained Classifier</p>
+                        </div>
+                        <div class="stat-status online">Ready</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon dataset">📁</div>
+                        <div class="stat-info">
+                            <h3>Dataset</h3>
+                            <p>RSNA Aneurysm</p>
+                        </div>
+                        <div class="stat-status online">Loaded</div>
+                    </div>
+                </div>
+                
+                <div class="info-section">
+                    <h2>Model Comparison</h2>
+                    <div class="comparison-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Feature</th>
+                                    <th>MedGemma</th>
+                                    <th>3D ResNet</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Input</td>
+                                    <td>2D Slices</td>
+                                    <td>3D Volume</td>
+                                </tr>
+                                <tr>
+                                    <td>Output</td>
+                                    <td>Text Report</td>
+                                    <td>Probability</td>
+                                </tr>
+                                <tr>
+                                    <td>Training</td>
+                                    <td>Pre-trained</td>
+                                    <td>Custom trained</td>
+                                </tr>
+                                <tr>
+                                    <td>Best For</td>
+                                    <td>Reports & Explanations</td>
+                                    <td>Accurate Detection</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Page: Analyze -->
+            <section class="page" id="page-analyze">
+                <div class="analyze-container">
+                    <div class="patient-selector">
+                        <h2>Select Patient</h2>
+                        <div class="select-wrapper">
+                            <select id="patient-select">
+                                <option value="">Loading patients...</option>
+                            </select>
+                        </div>
+                        
+                        <div class="model-selector">
+                            <h3>Select Models</h3>
+                            <label class="checkbox-wrapper">
+                                <input type="checkbox" id="use-medgemma" checked>
+                                <span class="checkmark"></span>
+                                <span>MedGemma (AI Report)</span>
+                            </label>
+                            <label class="checkbox-wrapper">
+                                <input type="checkbox" id="use-resnet" checked>
+                                <span class="checkmark"></span>
+                                <span>3D ResNet (Detection)</span>
+                            </label>
+                        </div>
+                        
+                        <button class="btn btn-primary btn-large" id="start-analysis-btn">
+                            🔬 Start Analysis
+                        </button>
+                    </div>
+                    
+                    <div class="analysis-progress" id="analysis-progress" style="display: none;">
+                        <h2>Analysis in Progress</h2>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                        <p class="progress-text" id="progress-text">Initializing...</p>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Page: Results -->
+            <section class="page" id="page-results">
+                <div class="results-container">
+                    <div class="results-header">
+                        <h2>Analysis Results</h2>
+                        <span class="results-time" id="results-time"></span>
+                    </div>
+                    
+                    <div class="results-grid">
+                        <!-- MedGemma Results Card -->
+                        <div class="result-card medgemma-card">
+                            <div class="result-header">
+                                <span class="result-icon">🧠</span>
+                                <h3>MedGemma Analysis</h3>
+                            </div>
+                            <div class="result-content" id="medgemma-results">
+                                <p class="placeholder">No results yet. Run an analysis first.</p>
+                            </div>
+                        </div>
+                        
+                        <!-- ResNet Results Card -->
+                        <div class="result-card resnet-card">
+                            <div class="result-header">
+                                <span class="result-icon">🎯</span>
+                                <h3>3D ResNet Detection</h3>
+                            </div>
+                            <div class="result-content" id="resnet-results">
+                                <p class="placeholder">No results yet. Run an analysis first.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Page: Compare -->
+            <section class="page" id="page-compare">
+                <div class="compare-container">
+                    <h2>Side-by-Side Model Comparison</h2>
+                    <div class="compare-grid" id="compare-results">
+                        <p class="placeholder">Run an analysis to see comparison results.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

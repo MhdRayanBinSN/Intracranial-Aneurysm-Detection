@@ -65,5 +65,37 @@ export const getDemoPrediction = async () => {
     return response.data;
 };
 
+// ==================== MEDGEMMA API ====================
+
+// Get patients for MedGemma analysis
+export const getMedGemmaPatients = async () => {
+    const response = await api.get('/medgemma/patients');
+    return response.data;
+};
+
+// Analyze with MedGemma
+export const analyzeMedGemma = async (seriesUid, sampleEvery = 20) => {
+    const response = await api.post('/medgemma/analyze', null, {
+        params: { series_uid: seriesUid, sample_every: sampleEvery },
+        timeout: 300000, // 5 minutes for MedGemma
+    });
+    return response.data;
+};
+
+// Get MedGemma results
+export const getMedGemmaResults = async (analysisId) => {
+    const response = await api.get(`/medgemma/results/${analysisId}`);
+    return response.data;
+};
+
+// Get slice image with optional heatmap
+export const getSliceImage = async (seriesUid, sliceIndex, heatmap = false) => {
+    const response = await api.get(`/medgemma/slice/${seriesUid}/${sliceIndex}`, {
+        params: { heatmap }
+    });
+    return response.data;
+};
+
 // Export the API instance
 export default api;
+

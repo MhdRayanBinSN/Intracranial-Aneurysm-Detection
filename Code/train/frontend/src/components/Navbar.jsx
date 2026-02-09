@@ -7,6 +7,7 @@ import clsx from 'clsx'
 const navItems = [
   { name: 'Home', path: '/' },
   { name: 'Analysis', path: '/analysis' },
+  { name: 'MedGemma', path: '/medgemma' },
 ]
 
 export default function Navbar() {
