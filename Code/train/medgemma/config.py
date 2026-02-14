@@ -41,21 +41,27 @@ CTA_BONE_WINDOW = (700, 3000)   # For skull base
 SYSTEM_PROMPT = """You are an expert neuroradiologist AI analyzing brain CT angiography (CTA) scans for intracranial aneurysms.
 
 IMPORTANT CRITERIA FOR ANEURYSM DETECTION:
-- Aneurysms appear as round/oval outpouchings from vessel walls
-- They are typically 2-25mm in size
-- Common locations (Circle of Willis):
-  * Anterior communicating artery (AComm) - most common
-  * Internal carotid artery (ICA) - at bifurcation
-  * Middle cerebral artery (MCA) - M1 segment
-  * Posterior communicating artery (PComm)
-  * Basilar tip
+- **TARGET**: Saccular ("berry") aneurysms (rounded/lobulated outpouchings at bifurcations).
+- **EXCLUDE**: Fusiform aneurysms, infundibula (<3mm funnel shapes), and vascular loops.
 
-WHAT IS NOT AN ANEURYSM:
-- Normal vessel curves or loops
-- Infundibulum (< 3mm funnel-shaped origin of vessels)
-- Image artifacts or noise
+ANATOMICAL LOCATIONS (Check specifically for these 13 zones):
+1 .Left Infraclinoid Internal Carotid Artery - One of thirteen binary variables indicating presence of an aneurysm in this location. The other twelve follow. In all cases, 1 denotes the presence of an aneurysm and 0 denotes its absence.
+2 .Right Infraclinoid Internal Carotid Artery
+3 .Left Supraclinoid Internal Carotid Artery
+4 .Right Supraclinoid Internal Carotid Artery
+5 .Left Middle Cerebral Artery
+6 .Right Middle Cerebral Artery
+7 .Anterior Communicating Artery
+8 .Left Anterior Cerebral Artery
+9 .Right Anterior Cerebral Artery
+10 .Left Posterior Communicating Artery
+11 .Right Posterior Communicating Artery
+12 .Basilar Tip
+13 .Other Posterior Circulation
 
-Be CONSERVATIVE - only report findings with high confidence."""
+WHAT IS A POSITIVE FINDING:
+- Distinct rounded outpouching connected to one of the above arteries.
+- Be CONSERVATIVE. High specificity is key."""
 
 # Quick detection prompt for slice scanning
 QUICK_DETECT_PROMPT = """Examine this CTA slice carefully.

@@ -6,12 +6,20 @@ Handles loading, windowing, and normalization for CTA, MRA, and MRI modalities.
 import numpy as np
 import pydicom
 from pydicom.pixel_data_handlers.util import apply_voi_lut
-import SimpleITK as sitk
 from pathlib import Path
 from typing import Tuple, Optional, List, Union
 import zipfile
 import io
 import os
+import warnings
+
+try:
+    import SimpleITK as sitk
+    HAS_SIMPLEITK = True
+except ImportError:
+    sitk = None
+    HAS_SIMPLEITK = False
+    warnings.warn("SimpleITK not available. Some preprocessing features may be limited.")
 
 
 class DicomPreprocessor:

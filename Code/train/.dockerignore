@@ -1,0 +1,11 @@
+
+# Valid for both backend and frontend contexts
+**/node_modules
+**/__pycache__
+**/.venv
+**/.env
+**/.git
+**/.gitignore
+**/dist
+**/build
+*.log

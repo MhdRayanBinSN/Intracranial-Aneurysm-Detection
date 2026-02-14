@@ -8,7 +8,7 @@ Run with:
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import uvicorn
@@ -16,6 +16,7 @@ import torch
 import numpy as np
 from pathlib import Path
 import tempfile
+import os
 import shutil
 import yaml
 import sys
@@ -25,20 +26,9 @@ import uuid
 sys.path.insert(0, str(Path(__file__).parent.parent / 'ml'))
 
 # Initialize FastAPI app
-app = FastAPI(
-    title="Intracranial Aneurysm Detection API",
-    description="API for detecting intracranial aneurysms from medical imaging",
-    version="1.0.0",
-)
+# app = FastAPI(...) is moved below to include lifespan
 
-# CORS middleware for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS middleware moved to after app initialization
 
 # Global variables for model
 model = None
@@ -102,12 +92,19 @@ class SeriesInfo(BaseModel):
 analysis_store: Dict[str, Any] = {}
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Load model on startup."""
+# Lifespan context manager (Replaces deprecated on_event)
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    Handles model loading and cleanup.
+    """
     global model, preprocessor
     
-    # Try to load model
+    # --- STARTUP ---
+    print("🚀 Starting MedGemma Backend...")
     try:
         from models import create_model
         from data import DicomPreprocessor
@@ -126,7 +123,7 @@ async def startup_event():
             if weights_path.exists():
                 checkpoint = torch.load(weights_path, map_location=device)
                 model.load_state_dict(checkpoint['model_state_dict'])
-                print(f"Loaded model weights from {weights_path}")
+                print(f"✅ Loaded model weights from {weights_path}")
             
             model = model.to(device)
             model.eval()
@@ -137,13 +134,40 @@ async def startup_event():
                 num_slices=config['data']['num_slices'],
             )
             
-            print(f"Model loaded successfully on {device}")
+            print(f"✅ Model loaded successfully on {device}")
         else:
-            print("Config not found, model not loaded")
+            print("⚠️ Config not found, model not loaded (Inference Only Mode)")
+            
     except Exception as e:
-        print(f"Error loading model: {e}")
+        print(f"⚠️ Error loading legacy model (Non-critical if using MedGemma): {e}")
         model = None
         preprocessor = None
+        
+    yield
+    
+    # --- SHUTDOWN ---
+    print("🛑 Shutting down MedGemma Backend...")
+    # Clean up resources if needed
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="Intracranial Aneurysm Detection API",
+    description="API for detecting intracranial aneurysms from medical imaging",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware for React frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", response_model=HealthResponse)
@@ -438,130 +462,278 @@ async def analyze_uploaded_files(files: List[UploadFile] = File(...)):
     
     findings = []
     slices_analyzed = 0
-    all_slice_images = []
     
-    for idx, file in enumerate(files):
+    # Create temp directory for this analysis's images
+    analysis_img_dir = os.path.join(tempfile.gettempdir(), "medgemma_images", analysis_id)
+    os.makedirs(analysis_img_dir, exist_ok=True)
+    
+    # 1. Collect all valid slices from inputs (DICOM & NIfTI)
+    all_slices = []
+    
+
+    for file in files:
+        fname = file.filename.lower()
         try:
             content = await file.read()
             
-            # Try to read as image first
-            try:
-                img = Image.open(BytesIO(content))
-                if img.mode != 'L':
-                    img = img.convert('L')
-                pixel_array = np.array(img, dtype=np.float32)
-            except Exception:
-                # Try DICOM
+            if fname.endswith(('.nii', '.nii.gz')):
+                # Handle NIfTI Volume
+                try:
+                    import nibabel as nib
+                    # NIfTI requires a file path usually
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=fname) as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+                    
+                    nii = nib.load(tmp_path)
+                    data = nii.get_fdata()
+                    os.unlink(tmp_path) # Cleanup immediate
+                    
+                    # Assume Z is last dimension (H, W, D)
+                    if len(data.shape) == 3:
+                        num_slices = data.shape[2]
+                        # Limit to reasonable number if massive? For now take all.
+                        for z in range(num_slices):
+                            # Transpose if needed, but strict axial is tricky without orientation.
+                            # Standardizing to float32
+                            arr = data[:, :, z].astype(np.float32)
+                            # Rotate if needed (NIfTI is often rotated relative to DICOM view)
+                            # We'll assume standard orientation for now or fix in preprocessor
+                            arr = np.rot90(arr) 
+                            
+                            all_slices.append({
+                                "pixel_array": arr,
+                                "filename": f"{fname} [Slice {z+1}]",
+                                "original_filename": fname
+                            })
+                except ImportError:
+                    print("⚠️ nibabel not installed, skipping NIfTI")
+                except Exception as e:
+                    print(f"⚠️ NIfTI error {fname}: {e}")
+                    
+            elif fname.endswith('.dcm'):
+                # Handle DICOM
                 try:
                     import pydicom
                     dcm = pydicom.dcmread(BytesIO(content))
-                    pixel_array = dcm.pixel_array.astype(np.float32)
+                    # Rescale
+                    arr = dcm.pixel_array.astype(np.float32)
                     slope = float(getattr(dcm, 'RescaleSlope', 1))
                     intercept = float(getattr(dcm, 'RescaleIntercept', 0))
-                    pixel_array = pixel_array * slope + intercept
+                    arr = arr * slope + intercept
+                    
+                    all_slices.append({
+                        "pixel_array": arr,
+                        "filename": fname,
+                        "original_filename": fname
+                    })
                 except Exception as e:
-                    print(f"⚠️ Could not read file {file.filename}: {e}")
-                    continue
-            
+                    print(f"⚠️ DICOM error {fname}: {e}")
+            else:
+                # Skip non-medical inputs (JPG/PNG) as requested
+                # print(f"Skipping non-medical file: {fname}")
+                pass
+                
+        except Exception as e:
+            print(f"Error reading {file.filename}: {e}")
+
+    if not all_slices:
+        # Fallback for empty or all-invalid
+        pass
+
+    # 2. Analyze the collected slices
+    for idx, slice_data in enumerate(all_slices):
+        slice_filename = slice_data["filename"]
+        
+        # Compatibility: Create 'file' object for except block
+        class MockFile: pass
+        file = MockFile()
+        file.filename = slice_data.get("original_filename", slice_filename)
+        # Ensure slice_file is available for the LLM step later
+        slice_file = file
+        
+        try:
+            pixel_array = slice_data["pixel_array"]
             slices_analyzed += 1
             h, w = pixel_array.shape
             
-            # Apply CTA windowing
-            window_center, window_width = 300, 600
-            lower = window_center - window_width / 2
-            upper = window_center + window_width / 2
-            windowed = np.clip(pixel_array, lower, upper)
-            windowed = ((windowed - lower) / (upper - lower) * 255).astype(np.uint8)
-            
-            # ============== REGION DETECTION ==============
-            # Find high-intensity regions (potential vessels/aneurysms)
-            threshold = 180  # High intensity threshold
-            binary = windowed > threshold
-            
-            # Clean up with morphological operations
-            binary = ndimage.binary_opening(binary, iterations=2)
-            binary = ndimage.binary_closing(binary, iterations=2)
-            
-            # Label connected components
-            labeled_array, num_features = label(binary)
-            regions = find_objects(labeled_array)
-            
-            # Create RGB image for visualization
-            rgb = np.stack([windowed, windowed, windowed], axis=-1).copy()
-            
-            # Create heatmap based on detected regions
-            heatmap = np.zeros_like(windowed, dtype=np.float32)
-            
-            detected_regions = []
-            for i, region in enumerate(regions):
-                if region is None:
-                    continue
+            # ============ KAGGLE WINNING PREPROCESSING & MULTI-MODALITY ============
+            try:
+                from data.advanced_preprocessing import KaggleWinningPreprocessor
+                preprocessor = KaggleWinningPreprocessor()
+                
+                # 1. Detect Modality
+                modality = preprocessor.detect_modality(pixel_array)
+                
+                rgb = None
+                windowed_for_detection = None
+                
+                if modality == 'CT':
+                    # === CT PIPELINE (Multi-Window) ===
+                    # Create 3-channel RGB: Brain, Vessel, Stroke
+                    rgb = preprocessor.create_multi_window_image(pixel_array)
                     
-                # Get bounding box coordinates
-                y_slice, x_slice = region
-                y_min, y_max = y_slice.start, y_slice.stop
-                x_min, x_max = x_slice.start, x_slice.stop
-                
-                # Filter by size (ignore very small or very large)
-                region_width = x_max - x_min
-                region_height = y_max - y_min
-                region_area = region_width * region_height
-                
-                min_size = 10
-                max_size = min(h, w) * 0.3
-                
-                if region_width < min_size or region_height < min_size:
-                    continue
-                if region_width > max_size or region_height > max_size:
-                    continue
-                
-                # Calculate region intensity
-                region_mask = labeled_array[y_min:y_max, x_min:x_max] == (i + 1)
-                region_intensity = np.mean(windowed[y_min:y_max, x_min:x_max][region_mask])
-                
-                if region_intensity > 180:
-                    detected_regions.append({
-                        "bbox": (x_min, y_min, x_max, y_max),
-                        "intensity": region_intensity,
-                        "area": region_area
-                    })
+                    # Apply CLAHE
+                    if preprocessor.use_clahe:
+                        for c in range(3):
+                            rgb[:, :, c] = preprocessor.apply_clahe(rgb[:, :, c])
                     
-                    # Add to heatmap
-                    for dy in range(-20, 20):
-                        for dx in range(-20, 20):
-                            cy, cx = (y_min + y_max) // 2, (x_min + x_max) // 2
-                            if 0 <= cy + dy < h and 0 <= cx + dx < w:
-                                dist = np.sqrt(dy**2 + dx**2)
-                                heatmap[cy + dy, cx + dx] += max(0, 1 - dist / 30)
+                    # Convert to 0-255
+                    rgb = (rgb * 255).astype(np.uint8)
+                    
+                    # Use Vessel channel (Green) for detection
+                    windowed_for_detection = rgb[:, :, 1]
+                    threshold = 180  # Fixed threshold for CT vessel window
+                    
+                else:
+                    # === MRI PIPELINE (Percentile Normalization) ===
+                    # Normalize and create pseudo-color
+                    rgb_norm = preprocessor.preprocess_mri(pixel_array)
+                    rgb = (rgb_norm * 255).astype(np.uint8)
+                    
+                    # Use Red channel (Linear) for detection
+                    windowed_for_detection = rgb[:, :, 0]
+                    # Adaptive threshold for MRI (e.g., top 5% intensity)
+                    threshold = np.percentile(windowed_for_detection, 95)
+                
+                # ============== ANEURYSM-SPECIFIC REGION DETECTION ==============
+                # Aneurysms are small (3-25mm), round/saccular, located near the
+                # Circle of Willis (central brain), and distinctly brighter than
+                # surrounding tissue. We apply strict filters to avoid flagging
+                # normal vessels, bone, and noise.
+                
+                # 1) DYNAMIC THRESHOLD — top 1% intensity (much stricter)
+                detection_threshold = np.percentile(windowed_for_detection, 99)
+                # Ensure minimum threshold to avoid near-black slices triggering
+                detection_threshold = max(detection_threshold, 200 if modality == 'CT' else threshold * 1.1)
+                
+                binary = windowed_for_detection > detection_threshold
+                
+                # 2) AGGRESSIVE MORPHOLOGICAL CLEANING — remove noise
+                binary = ndimage.binary_opening(binary, iterations=3)
+                binary = ndimage.binary_closing(binary, iterations=2)
+                
+                # Label connected components
+                labeled_array, num_features = label(binary)
+                regions = find_objects(labeled_array)
+                
+                # Create heatmap
+                heatmap = np.zeros((h, w), dtype=np.float32)
+                
+                detected_regions = []
+                for i, region in enumerate(regions):
+                    if region is None:
+                        continue
+                        
+                    y_slice, x_slice = region
+                    y_min, y_max = y_slice.start, y_slice.stop
+                    x_min, x_max = x_slice.start, x_slice.stop
+                    
+                    region_width = x_max - x_min
+                    region_height = y_max - y_min
+                    bbox_area = region_width * region_height
+                    
+                    # 3) SIZE FILTER — aneurysms are ~3-25mm
+                    # At typical CT resolution (~0.5mm/pixel), that's ~6-50 pixels
+                    min_size = 15   # ~7mm minimum (smaller = noise/artifacts)
+                    max_size = 120  # ~60mm maximum (larger = normal structures)
+                    
+                    if region_width < min_size or region_height < min_size:
+                        continue
+                    if region_width > max_size or region_height > max_size:
+                        continue
+                    
+                    # 4) CENTRAL BRAIN FILTER — Circle of Willis is in central region
+                    # Exclude regions near edges (skull, scalp, etc.)
+                    margin_x = w * 0.15  # 15% margin from each edge
+                    margin_y = h * 0.15
+                    cx_region = (x_min + x_max) / 2
+                    cy_region = (y_min + y_max) / 2
+                    
+                    if cx_region < margin_x or cx_region > (w - margin_x):
+                        continue  # Too close to left/right edge (likely skull)
+                    if cy_region < margin_y or cy_region > (h - margin_y):
+                        continue  # Too close to top/bottom edge
+                    
+                    # 5) CIRCULARITY FILTER — aneurysms are round/saccular
+                    # Compute actual pixel count vs bounding box area
+                    region_mask = labeled_array[y_min:y_max, x_min:x_max] == (i + 1)
+                    pixel_count = np.sum(region_mask)
+                    
+                    # Need minimum fill to not be noise
+                    if pixel_count < 50:
+                        continue
+                    
+                    # Circularity = actual_pixels / bbox_area  (1.0 = perfectly fills box)
+                    # Aneurysms are round so > 0.35; elongated vessels < 0.2
+                    circularity = pixel_count / bbox_area if bbox_area > 0 else 0
+                    if circularity < 0.35:
+                        continue  # Too elongated (likely a vessel, not aneurysm)
+                    
+                    # Aspect ratio check — aneurysms are roughly circular
+                    aspect_ratio = max(region_width, region_height) / (min(region_width, region_height) + 1e-6)
+                    if aspect_ratio > 3.0:
+                        continue  # Too stretched — linear vessel, not saccular
+                    
+                    # 6) INTENSITY CHECK — must be significantly above threshold
+                    region_intensity = np.mean(windowed_for_detection[y_min:y_max, x_min:x_max][region_mask])
+                    
+                    if region_intensity > detection_threshold:
+                        detected_regions.append({
+                            "bbox": (x_min, y_min, x_max, y_max),
+                            "intensity": float(region_intensity),
+                            "area": int(pixel_count),
+                            "circularity": float(circularity),
+                            "aspect_ratio": float(aspect_ratio),
+                            "modality": modality
+                        })
+                        
+                        # Add to heatmap (focused Gaussian)
+                        cy, cx = (y_min + y_max) // 2, (x_min + x_max) // 2
+                        radius = max(region_width, region_height)
+                        for dy in range(-radius, radius+1):
+                            for dx in range(-radius, radius+1):
+                                ny, nx = cy + dy, cx + dx
+                                if 0 <= ny < h and 0 <= nx < w:
+                                    dist = np.sqrt(dy**2 + dx**2)
+                                    if dist <= radius:
+                                        heatmap[ny, nx] += max(0, 1 - dist / radius)
+                
+                # Apply subtle heatmap overlay only where detections exist
+                if heatmap.max() > 0:
+                    heatmap = (heatmap / heatmap.max())
+                    rgb[:, :, 0] = np.minimum(255, rgb[:, :, 0].astype(np.float32) + heatmap * 150).astype(np.uint8)
+                    rgb[:, :, 1] = np.maximum(0, rgb[:, :, 1].astype(np.float32) - heatmap * 50).astype(np.uint8)
             
-            # Normalize heatmap
-            if heatmap.max() > 0:
-                heatmap = (heatmap / heatmap.max() * 255).astype(np.uint8)
+            except Exception as e:
+                 # Fallback if module not found or error
+                 print(f"⚠️ Advanced preprocessing error: {e}. Using fallback.")
+                 window_center, window_width = 300, 600
+                 lower = window_center - window_width / 2
+                 upper = window_center + window_width / 2
+                 windowed = np.clip(pixel_array, lower, upper)
+                 windowed = ((windowed - lower) / (upper - lower) * 255).astype(np.uint8)
+                 rgb = np.stack([windowed]*3, axis=-1)
+                 detected_regions = []
             
-            # Apply heatmap overlay (red channel)
-            rgb[:, :, 0] = np.minimum(255, rgb[:, :, 0].astype(np.float32) + heatmap * 0.7).astype(np.uint8)
-            rgb[:, :, 1] = np.maximum(0, rgb[:, :, 1].astype(np.float32) - heatmap * 0.3).astype(np.uint8)
-            
-            # Draw bounding boxes
-            img_pil = Image.fromarray(rgb)
-            draw = ImageDraw.Draw(img_pil)
-            
-            for region in detected_regions:
-                x_min, y_min, x_max, y_max = region["bbox"]
-                # Red bounding box
-                draw.rectangle([x_min, y_min, x_max, y_max], outline=(255, 0, 0), width=2)
-                # Add label
-                draw.text((x_min, y_min - 12), f"ROI", fill=(255, 255, 0))
-            
-            # Convert to base64
-            buffer = BytesIO()
-            img_pil.save(buffer, format="PNG")
-            img_base64 = f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-            
-            all_slice_images.append(img_base64)
-            
-            # Create finding if regions detected
+            # Only process and save images for slices with actual findings
             if len(detected_regions) > 0:
+                # Draw bounding boxes on detected slices only
+                img_pil = Image.fromarray(rgb)
+                draw = ImageDraw.Draw(img_pil)
+                
+                for region in detected_regions:
+                    x_min, y_min, x_max, y_max = region["bbox"]
+                    draw.rectangle([x_min, y_min, x_max, y_max], outline=(255, 0, 0), width=2)
+                    draw.text((x_min, y_min - 12), f"ROI", fill=(255, 255, 0))
+                
+                # Save only finding images to disk
+                img_path = os.path.join(analysis_img_dir, f"slice_{idx}.png")
+                img_pil.save(img_path, format="PNG")
+                img_url = f"/medgemma/finding-image/{analysis_id}/{idx}"
+                
+                print(f"  >> Slice {idx+1}: {len(detected_regions)} suspicious region(s) found")
+
                 # Sort by intensity
                 detected_regions.sort(key=lambda x: x["intensity"], reverse=True)
                 top_region = detected_regions[0]
@@ -570,38 +742,94 @@ async def analyze_uploaded_files(files: List[UploadFile] = File(...)):
                 center_x = (x_min + x_max) // 2
                 center_y = (y_min + y_max) // 2
                 
-                # Determine location based on position
-                if center_x < w * 0.33:
+                # Map to one of the 13 anatomical locations based on spatial position
+                # Radiological convention: left in image = patient right
+                if center_x < w * 0.5:
                     side = "Right"  # Radiological convention
-                elif center_x > w * 0.66:
+                else:
                     side = "Left"
-                else:
-                    side = "Midline"
                 
-                if center_y < h * 0.4:
-                    location = "Anterior region (possible ACA/AComm)"
-                elif center_y > h * 0.6:
-                    location = "Posterior region (possible PCA/Basilar)"
+                # Determine arterial zone by vertical + horizontal position
+                if center_y < h * 0.3:
+                    # Superior / Anterior region
+                    if abs(center_x - w * 0.5) < w * 0.15:
+                        location_name = "Anterior Communicating Artery"
+                    else:
+                        location_name = f"{side} Anterior Cerebral Artery"
+                elif center_y < h * 0.45:
+                    # Supraclinoid ICA / MCA region
+                    if abs(center_x - w * 0.5) > w * 0.25:
+                        location_name = f"{side} Middle Cerebral Artery"
+                    else:
+                        location_name = f"{side} Supraclinoid Internal Carotid Artery"
+                elif center_y < h * 0.65:
+                    # Infraclinoid ICA / PComm region
+                    if abs(center_x - w * 0.5) > w * 0.2:
+                        location_name = f"{side} Infraclinoid Internal Carotid Artery"
+                    else:
+                        location_name = f"{side} Posterior Communicating Artery"
                 else:
-                    location = "Middle region (possible MCA/ICA)"
+                    # Posterior region
+                    if abs(center_x - w * 0.5) < w * 0.1:
+                        location_name = "Basilar Tip"
+                    else:
+                        location_name = "Other Posterior Circulation"
                 
-                response = f"""🎯 HIGH-INTENSITY REGION DETECTED
+                # Generate MedGemma Analysis for the top finding
+                try:
+                    # Lazy load MedGemma
+                    from main import get_medgemma
+                    medgemma = get_medgemma()
+                    
+                    # Analyze the specific region image
+                    region_img = Image.fromarray(rgb)
+                    
+                    # Crop to region context (slightly larger than bbox)
+                    pad = 50
+                    crop_box = (
+                        max(0, top_region["bbox"][0] - pad),
+                        max(0, top_region["bbox"][1] - pad),
+                        min(w, top_region["bbox"][2] + pad),
+                        min(h, top_region["bbox"][3] + pad)
+                    )
+                    cropped_img = region_img.crop(crop_box)
+                    
+                    # Run Kaggle-specific analysis
+                    slice_info = f"Slice {idx+1}"
+                    if hasattr(slice_file, 'filename'):
+                        slice_info += f" ({slice_file.filename})"
+                    
+                    llm_analysis = medgemma.analyze_for_kaggle(cropped_img, modality=modality, slice_info=slice_info)
+                    
+                    response = f"""HIGH-INTENSITY REGION DETECTED
 
-📍 Location: {side} {location}
-📦 Bounding Box: ({x_min}, {y_min}) to ({x_max}, {y_max})
-📊 Max Intensity: {top_region['intensity']:.0f}
-📐 Region Size: {top_region['area']} pixels
-🔢 Total ROIs: {len(detected_regions)}
+Location: {location_name}
+Bounding Box: ({x_min}, {y_min}) to ({x_max}, {y_max})
+Max Intensity: {top_region['intensity']:.0f}
 
-⚠️ Note: Automated detection - requires radiologist review."""
+MEDGEMMA ANALYSIS:
+{llm_analysis}
+
+Note: Automated detection - requires radiologist review."""
+                except Exception as e:
+                    print(f"MedGemma analysis failed: {e}")
+                    response = f"""HIGH-INTENSITY REGION DETECTED
+
+Location: {location_name}
+Bounding Box: ({x_min}, {y_min}) to ({x_max}, {y_max})
+Max Intensity: {top_region['intensity']:.0f}
+
+(MedGemma detailed analysis unavailable)"""
                 
                 findings.append({
                     "slice_index": idx,
                     "slice_number": idx + 1,
                     "response": response,
-                    "image": img_base64,
+                    "image": img_url,
                     "regions": len(detected_regions),
-                    "bbox": top_region["bbox"]
+                    "bbox": top_region["bbox"],
+                    "location": location_name,
+                    "intensity": top_region["intensity"]
                 })
                 
         except Exception as e:
@@ -610,26 +838,50 @@ async def analyze_uploaded_files(files: List[UploadFile] = File(...)):
     
     processing_time = time.time() - start_time
     
+    # Group findings by anatomical location
+    from collections import defaultdict
+    findings_by_location = defaultdict(list)
+    for f in findings:
+        loc = f.get("location", "Unknown")
+        findings_by_location[loc].append({
+            "slice_index": f["slice_index"],
+            "slice_number": f["slice_number"],
+            "response": f["response"],
+            "image": f["image"],  # URL, not base64
+            "bbox": f["bbox"],
+            "intensity": f.get("intensity", 0),
+            "regions": f.get("regions", 0),
+        })
+    
+    # Sort slices within each location by slice number
+    for loc in findings_by_location:
+        findings_by_location[loc].sort(key=lambda x: x["slice_number"])
+    
+    # Count unique locations
+    num_locations = len(findings_by_location)
+    total_detection_slices = len(findings)
+    
     if findings:
         total_regions = sum(f.get("regions", 0) for f in findings)
-        report = f"""📊 CT SCAN ANALYSIS REPORT
+        report = f"""CT SCAN ANALYSIS REPORT
 
-✅ Analyzed: {slices_analyzed} slice(s)
-🎯 Findings: {len(findings)} slice(s) with detections
-📦 Total ROIs: {total_regions} region(s) of interest
+Analyzed: {slices_analyzed} slice(s)
+Findings: {total_detection_slices} slice(s) with detections across {num_locations} location(s)
+Total ROIs: {total_regions} region(s) of interest
+
+Locations with findings:
+{chr(10).join(f'  - {loc}: {len(slices)} slice(s)' for loc, slices in findings_by_location.items())}
 
 Detection Method: Intensity-based region segmentation
-Threshold: >180 HU (high-density regions)
 
-⚠️ This is automated detection. All findings require verification by a qualified radiologist."""
+This is automated detection. All findings require verification by a qualified radiologist."""
     else:
-        report = f"""📊 CT SCAN ANALYSIS REPORT
+        report = f"""CT SCAN ANALYSIS REPORT
 
-✅ Analyzed: {slices_analyzed} slice(s)
-✅ No significant high-intensity regions detected
+Analyzed: {slices_analyzed} slice(s)
+No significant high-intensity regions detected.
 
 Detection Method: Intensity-based region segmentation
-Threshold: >180 HU
 
 Note: Absence of findings does not rule out pathology."""
     
@@ -639,11 +891,23 @@ Note: Absence of findings does not rule out pathology."""
         "report": report,
         "slices_analyzed": slices_analyzed,
         "has_findings": len(findings) > 0,
-        "findings": findings[:10],  # Max 10 findings
+        "findings": findings,
+        "findings_by_location": dict(findings_by_location),
+        "num_locations": num_locations,
         "processing_time": processing_time,
-        "images": all_slice_images[:20]
     }
 
+
+# Serve full-quality slice images on demand (no base64 = no memory issues)
+@app.get("/medgemma/finding-image/{analysis_id}/{slice_index}")
+async def get_finding_image(analysis_id: str, slice_index: int):
+    """Serve a processed slice image as a full-quality PNG file."""
+    img_path = os.path.join(tempfile.gettempdir(), "medgemma_images", analysis_id, f"slice_{slice_index}.png")
+    
+    if not os.path.exists(img_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    return FileResponse(img_path, media_type="image/png")
 
 
 

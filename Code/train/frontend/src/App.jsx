@@ -6,6 +6,7 @@ import Home from './pages/Home'
 import Analysis from './pages/Analysis'
 import Results from './pages/Results'
 import MedGemma from './pages/MedGemma'
+import MedGemmaResults from './pages/MedGemmaResults'
 
 function App() {
   const [isLoading, setIsLoading] = useState(true)
@@ -42,6 +43,7 @@ function App() {
               <Route path="/analysis" element={<Analysis />} />
               <Route path="/results/:id" element={<Results />} />
               <Route path="/medgemma" element={<MedGemma />} />
+              <Route path="/medgemma/results" element={<MedGemmaResults />} />
             </Routes>
           </AnimatePresence>
         </main>

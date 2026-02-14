@@ -1,12 +1,9 @@
 import { useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { 
   BeakerIcon, 
-  DocumentTextIcon,
-  ExclamationTriangleIcon,
-  CheckCircleIcon,
   SparklesIcon,
-  EyeIcon,
   CloudArrowUpIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
@@ -14,13 +11,12 @@ import toast from 'react-hot-toast'
 import api from '../api/client'
 
 export default function MedGemma() {
+  const navigate = useNavigate()
   const [files, setFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [uploadedImages, setUploadedImages] = useState([]) // For previews
-  const [selectedSlice, setSelectedSlice] = useState(null)
   const fileInputRef = useRef(null)
 
   // Handle drag events
@@ -58,18 +54,17 @@ export default function MedGemma() {
   const handleFiles = (newFiles) => {
     // Filter for image files and DICOM
     const validFiles = newFiles.filter(file => 
-      file.name.endsWith('.dcm') || 
-      file.type.startsWith('image/') ||
-      file.name.match(/\.(jpg|jpeg|png|bmp|tif|tiff)$/i)
+      file.name.toLowerCase().endsWith('.dcm') || 
+      file.name.toLowerCase().endsWith('.nii') ||
+      file.name.toLowerCase().endsWith('.nii.gz')
     )
     
     if (validFiles.length === 0) {
-      toast.error('Please upload DICOM or image files')
+      toast.error('Please upload DICOM (.dcm) or NIfTI (.nii) files')
       return
     }
     
     setFiles(prev => [...prev, ...validFiles])
-    setResult(null)
     setError(null)
     
     // Create previews for non-DICOM files
@@ -94,7 +89,6 @@ export default function MedGemma() {
   const clearFiles = () => {
     setFiles([])
     setUploadedImages([])
-    setResult(null)
     setError(null)
   }
 
@@ -105,7 +99,6 @@ export default function MedGemma() {
     }
 
     setIsAnalyzing(true)
-    setResult(null)
     setError(null)
 
     try {
@@ -120,8 +113,9 @@ export default function MedGemma() {
         timeout: 120000, // 2 minutes
       })
       
-      setResult(response.data)
-      toast.success('Analysis complete!')
+      toast.success('Analysis complete! Redirecting to results...')
+      // Navigate to results page with data
+      navigate('/medgemma/results', { state: { result: response.data } })
     } catch (err) {
       console.error('Analysis error:', err)
       setError(err.response?.data?.detail || 'Analysis failed')
@@ -143,11 +137,11 @@ export default function MedGemma() {
           <div className="flex items-center justify-center gap-3 mb-4">
             <SparklesIcon className="w-10 h-10 text-primary-400" />
             <h1 className="text-4xl font-bold">
-              <span className="text-primary-400">CT Scan</span> Analysis
+              <span className="text-primary-400">Intracranial Aneurysm</span> Analysis
             </h1>
           </div>
           <p className="text-surface-400 max-w-xl mx-auto">
-            Upload your CT slices and get instant analysis with visual heatmaps.
+            Upload your CTA, MRA, or MRI scans and get instant AI-powered detection and analysis.
           </p>
         </motion.div>
 
@@ -172,7 +166,7 @@ export default function MedGemma() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".dcm,.jpg,.jpeg,.png,.bmp,.tif,.tiff,image/*"
+              accept=".dcm,.nii,.nii.gz"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -182,13 +176,13 @@ export default function MedGemma() {
                 isDragging ? 'text-primary-400' : 'text-surface-500'
               }`} />
               <h3 className="text-xl font-semibold mb-2">
-                {isDragging ? 'Drop files here' : 'Upload CT Slices'}
+                {isDragging ? 'Drop files here' : 'Upload Brain Scans'}
               </h3>
               <p className="text-surface-400 text-sm">
                 Drag & drop DICOM or image files, or click to browse
               </p>
               <p className="text-surface-500 text-xs mt-2">
-                Supports: .dcm, .jpg, .png, .bmp, .tif
+                Supports: .dcm, .nii, .nii.gz (Medical Formats Only)
               </p>
             </div>
           </motion.div>
@@ -256,7 +250,7 @@ export default function MedGemma() {
               ) : (
                 <>
                   <BeakerIcon className="w-6 h-6" />
-                  Analyze {files.length > 0 ? `${files.length} Slice(s)` : 'CT Scan'}
+                  Analyze {files.length > 0 ? `${files.length} Scan(s)` : 'Brain Scan'}
                 </>
               )}
             </motion.button>
@@ -273,135 +267,7 @@ export default function MedGemma() {
             </motion.div>
           )}
 
-          {/* Results */}
-          {result && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
-            >
-              {/* Summary Card */}
-              <div className="card p-6">
-                <div className="flex items-center gap-3 mb-4">
-                  <DocumentTextIcon className="w-6 h-6 text-primary-400" />
-                  <h2 className="text-xl font-semibold">Analysis Report</h2>
-                </div>
-                
-                <div className="grid grid-cols-3 gap-4 mb-6">
-                  <div className="bg-surface-800/50 rounded-xl p-4 text-center">
-                    <p className="text-2xl font-bold text-primary-400">{result.slices_analyzed}</p>
-                    <p className="text-sm text-surface-400">Slices Analyzed</p>
-                  </div>
-                  <div className="bg-surface-800/50 rounded-xl p-4 text-center">
-                    <p className="text-2xl font-bold text-primary-400">{result.findings?.length || 0}</p>
-                    <p className="text-sm text-surface-400">Findings</p>
-                  </div>
-                  <div className="bg-surface-800/50 rounded-xl p-4 text-center">
-                    <p className="text-2xl font-bold text-primary-400">{result.processing_time?.toFixed(1)}s</p>
-                    <p className="text-sm text-surface-400">Processing Time</p>
-                  </div>
-                </div>
 
-                {/* Status Badge */}
-                <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full mb-4 ${
-                  result.has_findings 
-                    ? 'bg-risk-high/20 text-risk-high'
-                    : 'bg-risk-low/20 text-risk-low'
-                }`}>
-                  {result.has_findings ? (
-                    <ExclamationTriangleIcon className="w-5 h-5" />
-                  ) : (
-                    <CheckCircleIcon className="w-5 h-5" />
-                  )}
-                  <span className="font-medium">
-                    {result.has_findings ? 'Potential Findings Detected' : 'No Obvious Abnormalities'}
-                  </span>
-                </div>
-
-                {/* Report */}
-                <div className="bg-surface-800/50 rounded-xl p-6 mt-4">
-                  <h3 className="text-sm font-medium text-surface-300 mb-3">Report</h3>
-                  <p className="text-surface-200 whitespace-pre-wrap leading-relaxed">
-                    {result.report}
-                  </p>
-                </div>
-              </div>
-
-              {/* Findings with Images */}
-              {result.findings && result.findings.length > 0 && (
-                <div className="card p-6">
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <ExclamationTriangleIcon className="w-5 h-5 text-risk-high" />
-                    Detailed Findings
-                  </h3>
-                  <div className="space-y-4">
-                    {result.findings.map((finding, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.1 }}
-                        className="bg-risk-high/10 border border-risk-high/30 rounded-xl p-4"
-                      >
-                        <div className="flex gap-4">
-                          {/* Image Preview */}
-                          {finding.image && (
-                            <div 
-                              className="w-32 h-32 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer border border-surface-700 hover:border-primary-400 transition-colors"
-                              onClick={() => setSelectedSlice({ index: finding.slice_index, image: finding.image })}
-                            >
-                              <img 
-                                src={finding.image} 
-                                alt={`Slice ${finding.slice_number}`}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                          )}
-                          <div className="flex-1">
-                            <p className="font-medium text-risk-high mb-1">
-                              Slice {finding.slice_number}
-                            </p>
-                            <p className="text-surface-300 text-sm whitespace-pre-wrap">
-                              {finding.response}
-                            </p>
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Image Viewer Modal */}
-              {selectedSlice && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="card p-6"
-                >
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                      <EyeIcon className="w-5 h-5 text-primary-400" />
-                      Slice {selectedSlice.index + 1} - Enlarged View
-                    </h3>
-                    <button
-                      onClick={() => setSelectedSlice(null)}
-                      className="text-surface-400 hover:text-white transition-colors"
-                    >
-                      ✕ Close
-                    </button>
-                  </div>
-                  <div className="flex justify-center">
-                    <img 
-                      src={selectedSlice.image} 
-                      alt={`Slice ${selectedSlice.index + 1}`}
-                      className="max-w-full max-h-[500px] rounded-xl border border-surface-700"
-                    />
-                  </div>
-                </motion.div>
-              )}
-            </motion.div>
-          )}
 
           {/* Info Text */}
           <p className="text-center text-surface-500 text-sm">
