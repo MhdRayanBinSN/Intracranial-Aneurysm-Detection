@@ -19,6 +19,118 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import DATASET_ZIP, OUTPUT_DIR
 from inference import MedGemmaInference
+import re
+
+
+def parse_aneurysm_response(response: str) -> bool:
+    """
+    Parse MedGemma's structured response to determine if aneurysm detected.
+    
+    Handles multiple response formats:
+    - "ANEURYSM: YES" / "ANEURYSM: NO"
+    - "aneurysm detected" / "no aneurysm detected"
+    - "YES" at start of line
+    - Presence of anatomical location descriptions
+    
+    Returns True if aneurysm is likely detected.
+    """
+    response_lower = response.lower().strip()
+    
+    # Pattern 1: Structured "ANEURYSM: YES/NO"
+    aneurysm_match = re.search(r'aneurysm\s*:\s*(yes|no)', response_lower)
+    if aneurysm_match:
+        return aneurysm_match.group(1) == 'yes'
+    
+    # Pattern 2: Check for explicit NO statements first (to avoid false positives)
+    negative_patterns = [
+        r'no aneurysm',
+        r'aneurysm[:\s]+no',
+        r'not\s+(see|detect|observe|identify)',
+        r'no\s+(visible|apparent|obvious|clear)\s+aneurysm',
+        r'negative for aneurysm',
+        r'no evidence of',
+        r'unremarkable',
+        r'within normal limits',
+    ]
+    for pattern in negative_patterns:
+        if re.search(pattern, response_lower):
+            return False
+    
+    # Pattern 3: Check for positive indicators
+    positive_patterns = [
+        r'aneurysm\s+detected',
+        r'aneurysm\s+identified',
+        r'aneurysm\s+present',
+        r'aneurysm\s+seen',
+        r'aneurysm\s+noted',
+        r'saccular\s+aneurysm',
+        r'berry\s+aneurysm',
+        r'outpouching\s+(from|at|of)',
+        r'(ica|mca|aca|pcomm|acomm|basilar)\s+aneurysm',
+        r'aneurysm.{0,30}(ica|mca|aca|pcomm|acomm|basilar)',
+        r'suspicious\s+(for|of)\s+aneurysm',
+        r'likely\s+aneurysm',
+        r'compatible\s+with\s+aneurysm',
+    ]
+    for pattern in positive_patterns:
+        if re.search(pattern, response_lower):
+            return True
+    
+    # Pattern 4: Simple "YES" response with confidence
+    if re.search(r'^yes\b', response_lower) or re.search(r'\byes\b.*confidence', response_lower):
+        return True
+    
+    # Default: no detection
+    return False
+
+
+def extract_location_from_response(response: str) -> str:
+    """Extract the anatomical location from MedGemma's response."""
+    response_lower = response.lower()
+    
+    # Location patterns with priority
+    location_patterns = [
+        (r'(left|right)\s+(infraclinoid|supraclinoid)\s+ica', lambda m: f"{m.group(1).title()} {m.group(2).title()} ICA"),
+        (r'(left|right)\s+mca', lambda m: f"{m.group(1).title()} MCA"),
+        (r'(left|right)\s+aca', lambda m: f"{m.group(1).title()} ACA"),
+        (r'(left|right)\s+pcomm', lambda m: f"{m.group(1).title()} PComm"),
+        (r'acomm|anterior\s+communicating', lambda m: "Anterior Communicating"),
+        (r'basilar\s+(tip|apex)', lambda m: "Basilar Tip"),
+        (r'basilar', lambda m: "Basilar Artery"),
+        (r'(left|right)\s+ica', lambda m: f"{m.group(1).title()} ICA"),
+        (r'circle\s+of\s+willis', lambda m: "Circle of Willis"),
+    ]
+    
+    for pattern, formatter in location_patterns:
+        match = re.search(pattern, response_lower)
+        if match:
+            return formatter(match)
+    
+    # Check for LOCATION: field
+    loc_match = re.search(r'location\s*:\s*([^\n]+)', response_lower)
+    if loc_match and loc_match.group(1).strip() != 'n/a':
+        return loc_match.group(1).strip().title()
+    
+    return "Unknown Location"
+
+
+def extract_confidence_from_response(response: str) -> str:
+    """Extract confidence level from MedGemma's response."""
+    response_lower = response.lower()
+    
+    conf_match = re.search(r'confidence\s*:\s*(high|medium|low)', response_lower)
+    if conf_match:
+        return conf_match.group(1).upper()
+    
+    # Infer confidence from language
+    if any(word in response_lower for word in ['definite', 'clear', 'obvious', 'certain']):
+        return 'HIGH'
+    if any(word in response_lower for word in ['possible', 'suspected', 'likely', 'probable']):
+        return 'MEDIUM'
+    if any(word in response_lower for word in ['uncertain', 'subtle', 'may be', 'questionable']):
+        return 'LOW'
+    
+    return 'MEDIUM'
 
 
 def load_all_slices_from_folder(folder_path: str) -> List[Dict]:
@@ -90,16 +202,67 @@ def load_all_slices_from_zip(series_uid: str) -> List[Dict]:
     return slices
 
 
-def analyze_all_slices(slices: List[Dict], sample_every: int = 10) -> Dict:
+def analyze_with_context(
+    slices: List[Dict], 
+    model: MedGemmaInference,
+    center_idx: int,
+    modality: str = "CTA"
+) -> Dict:
+    """
+    Analyze a slice using 3-slice context window for improved accuracy.
+    
+    Shows the model slices N-1, N, N+1 to provide 3D spatial context.
+    A true aneurysm appears across multiple consecutive slices.
+    
+    Args:
+        slices: All slices in the series
+        model: MedGemma inference instance
+        center_idx: Index of the center slice to analyze
+        modality: Imaging modality
+    
+    Returns:
+        dict with analysis results
+    """
+    n = len(slices)
+    
+    # Get adjacent slices
+    prev_idx = max(0, center_idx - 1)
+    next_idx = min(n - 1, center_idx + 1)
+    
+    # Extract pixel arrays
+    pixel_arrays = [s['pixel_array'] for s in slices]
+    
+    # Use the model's context window analysis
+    slice_info = f"Slice {center_idx + 1} of {n}"
+    
+    response = model.analyze_context_window(
+        pixel_arrays=pixel_arrays,
+        center_idx=center_idx,
+        modality=modality,
+        slice_info=slice_info,
+    )
+    
+    return {
+        'center_idx': center_idx,
+        'context_indices': [prev_idx, center_idx, next_idx],
+        'response': response,
+    }
+
+
+def analyze_all_slices(slices: List[Dict], sample_every: int = 10, use_context: bool = False) -> Dict:
     """
     Analyze slices using MedGemma.
     
     Args:
         slices: List of slice data
         sample_every: Analyze every Nth slice (for speed). Set to 1 for ALL.
+        use_context: If True, use 3-slice context window for better 3D analysis.
     """
     print(f"\n🧠 Initializing MedGemma...")
     model = MedGemmaInference()
+    
+    if use_context:
+        print("📐 Using 3-slice context window for better accuracy")
     
     # Select slices to analyze
     if sample_every > 1:
@@ -109,11 +272,21 @@ def analyze_all_slices(slices: List[Dict], sample_every: int = 10) -> Dict:
         selected_indices = list(range(len(slices)))
         print(f"\n📊 Analyzing ALL {len(slices)} slices (this may take a while...)")
     
-    # Short prompt for quick analysis
-    quick_prompt = """Look at this brain CTA slice. 
-    Answer ONLY: "ANEURYSM DETECTED" or "NO ANEURYSM DETECTED" 
-    If detected, add location (e.g., "at left MCA").
-    Be brief, max 20 words."""
+    # Improved prompt for aneurysm detection (structured output)
+    detection_prompt = """Analyze this brain CTA slice for intracranial aneurysms.
+
+Look carefully for:
+1. Saccular (berry) aneurysms: Round/lobulated outpouchings at vessel bifurcations
+2. Bright contrast-filled bulges projecting from arteries
+3. Common locations: ICA, MCA bifurcation, AComm, PComm, Basilar tip
+
+Output EXACTLY in this format:
+ANEURYSM: YES or NO
+CONFIDENCE: HIGH, MEDIUM, or LOW
+LOCATION: [specific location if YES, otherwise "N/A"]
+DESCRIPTION: [brief 1-sentence description]
+
+Be conservative - only say YES if you see a clear outpouching."""
     
     results = {
         'total_slices': len(slices),
@@ -130,22 +303,31 @@ def analyze_all_slices(slices: List[Dict], sample_every: int = 10) -> Dict:
         print(f"  {progress} Slice {idx+1}: {slice_data['filename'][:40]}...", end=" ")
         
         try:
-            response = model.analyze_image(
-                slice_data['pixel_array'],
-                prompt=quick_prompt,
-                system_prompt="You are a radiologist. Be very brief."
-            )
+            # Use context window analysis if enabled
+            if use_context:
+                context_result = analyze_with_context(slices, model, idx, modality="CTA")
+                response = context_result['response']
+            else:
+                response = model.analyze_image(
+                    slice_data['pixel_array'],
+                    prompt=detection_prompt,
+                    system_prompt="You are an expert neuroradiologist specializing in cerebrovascular imaging. Analyze carefully."
+                )
             
-            # Check if aneurysm detected
+            # Improved detection parsing - check structured output
             response_lower = response.lower()
-            has_aneurysm = "aneurysm detected" in response_lower and "no aneurysm" not in response_lower
+            has_aneurysm = parse_aneurysm_response(response_lower)
             
             if has_aneurysm:
-                print("⚠️ POTENTIAL FINDING!")
+                location = extract_location_from_response(response)
+                confidence = extract_confidence_from_response(response)
+                print(f"⚠️ POTENTIAL FINDING! [{confidence}] at {location}")
                 results['findings'].append({
                     'slice_index': idx,
                     'slice_number': idx + 1,
                     'filename': slice_data['filename'],
+                    'location': location,
+                    'confidence': confidence,
                     'response': response.strip()
                 })
             else:
@@ -164,14 +346,27 @@ def main():
     
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python analyze_all_slices.py <path_to_dicom_folder>")
-        print("  python analyze_all_slices.py <series_uid>")
-        print("\nExample:")
+        print("  python analyze_all_slices.py <path_to_dicom_folder> [sample_every] [--context]")
+        print("  python analyze_all_slices.py <series_uid> [sample_every] [--context]")
+        print("\nOptions:")
+        print("  sample_every: Analyze every Nth slice (default: 10, use 1 for ALL)")
+        print("  --context: Use 3-slice context window for better 3D analysis")
+        print("\nExamples:")
         print("  python analyze_all_slices.py 1.2.826.0.1.3680043.8.498.10035643...")
+        print("  python analyze_all_slices.py <uid> 5 --context")
         return
     
     input_path = sys.argv[1]
-    sample_every = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+    
+    # Parse arguments
+    sample_every = 10
+    use_context = False
+    
+    for arg in sys.argv[2:]:
+        if arg == '--context':
+            use_context = True
+        elif arg.isdigit():
+            sample_every = int(arg)
     
     # Determine if it's a folder path or series UID
     if os.path.isdir(input_path):
@@ -182,7 +377,7 @@ def main():
         slices = load_all_slices_from_zip(input_path)
     
     # Analyze
-    results = analyze_all_slices(slices, sample_every=sample_every)
+    results = analyze_all_slices(slices, sample_every=sample_every, use_context=use_context)
     
     # Print results
     print("\n" + "=" * 60)
@@ -196,7 +391,10 @@ def main():
         print("\n⚠️ SLICES WITH POTENTIAL ANEURYSMS:")
         print("-" * 60)
         for finding in results['findings']:
+            location = finding.get('location', 'Unknown')
+            confidence = finding.get('confidence', 'N/A')
             print(f"  📍 Slice {finding['slice_number']}: {finding['filename']}")
+            print(f"     Location: {location} | Confidence: {confidence}")
             print(f"     Response: {finding['response'][:100]}...")
             print()
     else:
@@ -209,18 +407,23 @@ def main():
         f.write("=" * 40 + "\n\n")
         f.write(f"Total slices: {results['total_slices']}\n")
         f.write(f"Analyzed: {results['analyzed_slices']}\n")
+        f.write(f"Context mode: {'Enabled' if use_context else 'Disabled'}\n")
         f.write(f"Findings: {len(results['findings'])}\n\n")
         
         if results['findings']:
             f.write("POTENTIAL ANEURYSM LOCATIONS:\n")
             f.write("-" * 40 + "\n")
             for finding in results['findings']:
+                location = finding.get('location', 'Unknown')
+                confidence = finding.get('confidence', 'N/A')
                 f.write(f"\nSlice {finding['slice_number']}: {finding['filename']}\n")
+                f.write(f"Location: {location} | Confidence: {confidence}\n")
                 f.write(f"Response: {finding['response']}\n")
     
     print(f"\n✅ Report saved to: {output_file}")
-    print("\n💡 TIP: To analyze ALL slices (slower), run:")
-    print(f"   python analyze_all_slices.py <uid> 1")
+    print("\n💡 TIPS for better accuracy:")
+    print("   • Analyze ALL slices: python analyze_all_slices.py <uid> 1")
+    print("   • Use 3D context:     python analyze_all_slices.py <uid> 5 --context")
 
 
 if __name__ == "__main__":

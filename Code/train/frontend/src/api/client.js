@@ -9,7 +9,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // Create axios instance
 const api = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 120000, // 2 minutes for long inference
+    timeout: 1200000, // 20 minutes for MedGemma analysis
     headers: {
         'Content-Type': 'application/json',
     },
@@ -95,6 +95,17 @@ export const getSliceImage = async (seriesUid, sliceIndex, heatmap = false) => {
     });
     return response.data;
 };
+
+// Compare both models on same files
+export const compareModels = async (files) => {
+    const formData = new FormData()
+    files.forEach(f => formData.append('files', f))
+    const response = await api.post('/compare', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 1200000, // 20 min — MedGemma takes time
+    })
+    return response.data
+}
 
 // Export the API instance
 export default api;

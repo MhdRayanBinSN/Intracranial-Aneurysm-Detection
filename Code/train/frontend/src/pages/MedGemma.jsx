@@ -110,7 +110,7 @@ export default function MedGemma() {
 
       const response = await api.post('/medgemma/analyze-upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000, // 2 minutes
+        timeout: 1200000, // 20 minutes — MedGemma analysis takes ~12 min for 228 slices
       })
       
       toast.success('Analysis complete! Redirecting to results...')
@@ -118,8 +118,24 @@ export default function MedGemma() {
       navigate('/medgemma/results', { state: { result: response.data } })
     } catch (err) {
       console.error('Analysis error:', err)
-      setError(err.response?.data?.detail || 'Analysis failed')
-      toast.error('Analysis failed')
+      console.error('Error response:', err.response?.data)
+      console.error('Error code:', err.code)
+      
+      let errorMsg = 'Analysis failed'
+      if (err.code === 'ECONNABORTED') {
+        errorMsg = 'Request timed out (10 min). The analysis is taking too long.'
+      } else if (err.code === 'ERR_NETWORK') {
+        errorMsg = 'Cannot reach server. Is the backend running?'
+      } else if (err.response?.data?.detail) {
+        errorMsg = err.response.data.detail
+      } else if (err.response?.status) {
+        errorMsg = `Server error (${err.response.status})`
+      } else if (err.message) {
+        errorMsg = err.message
+      }
+      
+      setError(errorMsg)
+      toast.error(errorMsg)
     } finally {
       setIsAnalyzing(false)
     }

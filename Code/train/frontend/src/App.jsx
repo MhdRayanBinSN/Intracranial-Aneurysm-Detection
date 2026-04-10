@@ -7,6 +7,9 @@ import Analysis from './pages/Analysis'
 import Results from './pages/Results'
 import MedGemma from './pages/MedGemma'
 import MedGemmaResults from './pages/MedGemmaResults'
+import Compare from './pages/Compare'
+import CompareResults from './pages/CompareResults'
+import Dataset from './pages/Dataset'
 
 function App() {
   const [isLoading, setIsLoading] = useState(true)
@@ -44,6 +47,9 @@ function App() {
               <Route path="/results/:id" element={<Results />} />
               <Route path="/medgemma" element={<MedGemma />} />
               <Route path="/medgemma/results" element={<MedGemmaResults />} />
+              <Route path="/compare" element={<Compare />} />
+              <Route path="/compare/results" element={<CompareResults />} />
+              <Route path="/dataset" element={<Dataset />} />
             </Routes>
           </AnimatePresence>
         </main>

@@ -8,6 +8,8 @@ const navItems = [
   { name: 'Home', path: '/' },
   { name: 'Analysis', path: '/analysis' },
   { name: 'MedGemma', path: '/medgemma' },
+  { name: 'Compare', path: '/compare' },
+  { name: 'Dataset', path: '/dataset' },
 ]
 
 export default function Navbar() {
