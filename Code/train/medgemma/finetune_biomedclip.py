@@ -35,6 +35,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
+from sklearn.metrics import roc_auc_score, classification_report
 
 # Add project paths
 sys.path.insert(0, str(Path(__file__).parent))
@@ -132,10 +133,10 @@ class RSNAAneurysmDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
+        import pydicom
 
         with zipfile.ZipFile(self.zip_path, 'r') as zf:
             with zf.open(path) as f:
-                import pydicom
                 dcm = pydicom.dcmread(f)
                 arr = dcm.pixel_array.astype(np.float32)
                 slope    = float(getattr(dcm, 'RescaleSlope', 1))
@@ -224,8 +225,9 @@ def train(args):
             images   = images.to(device)
             labels_b = labels_b.to(device)
 
-            with torch.no_grad():
-                features = model.encode_image(images)
+            # Forward through image encoder WITH gradients
+            # (last 2 blocks are unfrozen and need to train)
+            features = model.encode_image(images)
             features = features.to(torch.float32)
 
             logits = classifier(features).squeeze(1)
@@ -252,8 +254,6 @@ def train(args):
                 all_preds.extend(probs.tolist())
                 all_labels.extend(labels_b.tolist())
 
-        # Compute AUC
-        from sklearn.metrics import roc_auc_score, classification_report
         val_auc = roc_auc_score(all_labels, all_preds)
         avg_loss = train_loss / len(train_loader)
         print(f"\n📊 Epoch {epoch+1}/{args.epochs} | Train Loss: {avg_loss:.4f} | Val AUC: {val_auc:.4f}")
@@ -272,9 +272,10 @@ def train(args):
         scheduler.step()
 
     print(f"\n✅ Fine-tuning complete! Best Val AUC: {best_val_auc:.4f}")
-    print(f"   Checkpoint: {output_dir / 'best_classifier.pt'}")
+    ckpt_final = output_dir / 'best_classifier.pt'
+    print(f"   Checkpoint: {ckpt_final}")
     print(f"\n   To use in biomedclip_filter.py, set:")
-    print(f"   FINETUNED_CHECKPOINT = r'{output_dir / 'best_classifier.pt'}'")
+    print(f"   FINETUNED_CHECKPOINT = r'{ckpt_final}'")
 
 
 if __name__ == "__main__":

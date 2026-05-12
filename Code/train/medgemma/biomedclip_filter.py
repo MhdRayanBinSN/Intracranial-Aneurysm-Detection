@@ -92,6 +92,7 @@ class BiomedCLIPFilter:
         self.model = None
         self.preprocess = None
         self.tokenizer = None
+        self._text_feature_cache = {}
         self._loaded = False
         self._load()
 
@@ -123,6 +124,20 @@ class BiomedCLIPFilter:
         self._loaded = True
 
 
+    def _get_text_features(self, modality: str):
+        """Encode positive/negative prompts once per modality."""
+        mod = modality.upper()
+        if mod in self._text_feature_cache:
+            return self._text_feature_cache[mod]
+
+        pos_text, neg_text = MODALITY_PROMPTS.get(mod, MODALITY_PROMPTS["CTA"])
+        texts = self.tokenizer([pos_text, neg_text]).to(self.device)
+        text_features = self.model.encode_text(texts)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        self._text_feature_cache[mod] = text_features
+        return text_features
+
+
     @torch.no_grad()
     def score(self, image: Image.Image, modality: str = "CTA") -> float:
         """
@@ -135,21 +150,14 @@ class BiomedCLIPFilter:
         if not self._loaded:
             return 1.0  # Safe default: pass everything to MedGemma
 
-        mod = modality.upper()
-        pos_text, neg_text = MODALITY_PROMPTS.get(mod, MODALITY_PROMPTS["CTA"])
-
         # Preprocess image
         img_tensor = self.preprocess(image).unsqueeze(0).to(self.device)
 
-        # Tokenize both prompts
-        texts = self.tokenizer([pos_text, neg_text]).to(self.device)
-
         # Compute cosine similarities
         image_features = self.model.encode_image(img_tensor)
-        text_features  = self.model.encode_text(texts)
+        text_features  = self._get_text_features(modality)
 
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features  = text_features  / text_features.norm(dim=-1, keepdim=True)
 
         # Dot product similarity
         logits = (image_features @ text_features.T).squeeze(0)  # [2]
@@ -248,18 +256,13 @@ class BiomedCLIPFilter:
         if not self._loaded or not images:
             return [1.0] * len(images)
 
-        mod = modality.upper()
-        pos_text, neg_text = MODALITY_PROMPTS.get(mod, MODALITY_PROMPTS["CTA"])
-
         # Stack image tensors
         img_tensors = torch.stack([self.preprocess(img) for img in images]).to(self.device)
-        texts = self.tokenizer([pos_text, neg_text]).to(self.device)
 
         image_features = self.model.encode_image(img_tensors)
-        text_features  = self.model.encode_text(texts)
+        text_features  = self._get_text_features(modality)
 
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-        text_features  = text_features  / text_features.norm(dim=-1, keepdim=True)
 
         logits = image_features @ text_features.T  # [B, 2]
         probs  = logits.softmax(dim=-1)             # [B, 2]

@@ -13,8 +13,8 @@ import os
 
 router = APIRouter(prefix="/dataset", tags=["Dataset"])
 
-# Dataset paths
-DATA_ROOT = Path("C:/Users/Rayan/Desktop/Main Project")
+# Dataset paths — use same DATA_ROOT as main.py
+DATA_ROOT = Path(os.environ.get("DATA_ROOT", r"C:\Users\Rayan\Desktop\Main Project"))
 TRAIN_CSV = DATA_ROOT / "train.csv"
 ZIP_FILE = DATA_ROOT / "rsna-intracranial-aneurysm-detection.zip"
 
@@ -125,7 +125,7 @@ def get_dataset_info():
                 "platform": "Kaggle",
                 "task": "Multi-label binary classification across 13 anatomical locations",
                 "imaging": "CT Angiography (CTA), MR Angiography (MRA), MRI",
-                "url": "https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection",
+                "url": "https://www.kaggle.com/competitions/rsna-2023-abdominal-trauma-detection",  # RSNA 2023 dataset
             },
         }
 

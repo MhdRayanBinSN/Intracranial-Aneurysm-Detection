@@ -21,7 +21,10 @@ CACHE_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Dataset (same as main project)
-DATASET_ZIP = r"C:\Users\Rayan\Desktop\Main Project\rsna-intracranial-aneurysm-detection.zip"
+DATASET_ZIP = os.environ.get(
+    "DATASET_ZIP",
+    r"C:\Users\Rayan\Desktop\Main Project\rsna-intracranial-aneurysm-detection.zip"
+)
 
 # Inference Settings
 MAX_NEW_TOKENS     = 200   # Fast structured prompt — enough for YES/NO + location

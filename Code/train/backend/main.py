@@ -7,21 +7,25 @@ Run with:
 """
 
 import os
+import time
+import re
+import shutil
+import sys
+import uuid
+import tempfile
+import threading
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+from collections import defaultdict
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 import uvicorn
 import torch
 import numpy as np
-from pathlib import Path
-import tempfile
-import os
-import shutil
-import sys
-import uuid
+from PIL import Image
 
 
 
@@ -30,12 +34,15 @@ import uuid
 
 # CORS middleware moved to after app initialization
 
+# Centralized path configuration — override via environment variables
+DATA_ROOT = Path(os.environ.get("DATA_ROOT", r"C:\Users\Rayan\Desktop\Main Project"))
+
 # Global variables
 _medgemma_instance = None   # MedGemma LLM — loaded at startup
 _biomedclip_filter = None   # BiomedCLIP pre-filter — loaded at startup
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Location names for predictions
+# Location names for predictions (13 RSNA locations + 1 overall)
 LOCATION_NAMES = [
     'Left Infraclinoid Internal Carotid Artery',
     'Right Infraclinoid Internal Carotid Artery',
@@ -43,6 +50,7 @@ LOCATION_NAMES = [
     'Right Supraclinoid Internal Carotid Artery',
     'Left Middle Cerebral Artery',
     'Right Middle Cerebral Artery',
+    'Anterior Communicating Artery',
     'Left Anterior Cerebral Artery',
     'Right Anterior Cerebral Artery',
     'Left Posterior Communicating Artery',
@@ -51,6 +59,248 @@ LOCATION_NAMES = [
     'Other Posterior Circulation',
     'Aneurysm Present',
 ]
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read a positive integer environment setting with a safe fallback."""
+    try:
+        value = int(os.environ.get(name, default))
+        return value if value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+# MedGemma is the expensive stage. Keep this high enough for sensitivity, but
+# bounded so a full CTA/MRA series does not take hours.
+MAX_SLICES_FOR_MEDGEMMA = _env_int("MEDGEMMA_MAX_SLICES", 24)
+BASELINE_SERIES_SAMPLES = _env_int("MEDGEMMA_BASELINE_SAMPLES", 6)
+
+
+def _safe_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _image_position_z(dcm):
+    ipp = getattr(dcm, "ImagePositionPatient", None)
+    try:
+        if ipp is not None and len(ipp) >= 3:
+            return float(ipp[2])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _slice_sort_key(slice_data: Dict[str, Any]):
+    """
+    Sort a DICOM/NIfTI series by acquisition metadata, not upload/file-name order.
+    RSNA DICOM filenames are SOPInstanceUIDs, so lexical order is anatomically random.
+    """
+    series_uid = slice_data.get("series_uid") or ""
+    filename = slice_data.get("filename") or ""
+    instance_number = slice_data.get("instance_number")
+    slice_location = slice_data.get("slice_location")
+    position_z = slice_data.get("image_position_z")
+
+    if instance_number is not None:
+        return (series_uid, 0, float(instance_number), filename)
+    if slice_location is not None:
+        return (series_uid, 1, float(slice_location), filename)
+    if position_z is not None:
+        return (series_uid, 2, float(position_z), filename)
+    return (series_uid, 9, 0.0, filename)
+
+
+def _sort_dicom_file_paths(paths: List[str]) -> List[str]:
+    """Sort on-disk DICOM paths using metadata, with filename fallback."""
+    try:
+        import pydicom
+    except Exception:
+        return sorted(paths)
+
+    keyed = []
+    for path in paths:
+        try:
+            dcm = pydicom.dcmread(path, stop_before_pixels=True)
+            keyed.append((
+                _slice_sort_key({
+                    "series_uid": str(getattr(dcm, "SeriesInstanceUID", "")),
+                    "instance_number": _safe_float(getattr(dcm, "InstanceNumber", None)),
+                    "slice_location": _safe_float(getattr(dcm, "SliceLocation", None)),
+                    "image_position_z": _image_position_z(dcm),
+                    "filename": Path(path).name,
+                }),
+                path,
+            ))
+        except Exception:
+            keyed.append(((str(path), 9, 0.0, Path(path).name), path))
+    return [path for _, path in sorted(keyed, key=lambda item: item[0])]
+
+
+def _read_dicom_from_bytes(content: bytes):
+    """Read uploaded bytes as DICOM, including valid DICOM files without .dcm."""
+    import pydicom
+    from io import BytesIO
+
+    try:
+        dcm = pydicom.dcmread(BytesIO(content))
+    except Exception as first_error:
+        try:
+            dcm = pydicom.dcmread(BytesIO(content), force=True)
+        except Exception:
+            raise first_error
+
+    if not hasattr(dcm, "PixelData"):
+        raise ValueError("DICOM file has no PixelData")
+    return dcm
+
+
+def _dicom_to_slice(dcm, filename: str) -> Dict[str, Any]:
+    arr = dcm.pixel_array.astype(np.float32)
+    slope = float(getattr(dcm, 'RescaleSlope', 1))
+    intercept = float(getattr(dcm, 'RescaleIntercept', 0))
+    arr = arr * slope + intercept
+
+    return {
+        "pixel_array": arr,
+        "filename": filename,
+        "original_filename": filename,
+        "modality": None,  # filled by caller after modality detection
+        "series_uid": str(getattr(dcm, "SeriesInstanceUID", "")),
+        "sop_instance_uid": str(getattr(dcm, "SOPInstanceUID", "")),
+        "instance_number": _safe_float(getattr(dcm, "InstanceNumber", None)),
+        "slice_location": _safe_float(getattr(dcm, "SliceLocation", None)),
+        "image_position_z": _image_position_z(dcm),
+    }
+
+
+def _simple_image_suspicion(image: Image.Image) -> float:
+    """Fast fallback score when CLIP is unavailable; used only for slice ranking."""
+    arr = np.array(image.convert("L")).astype(np.float32)
+    if arr.size == 0:
+        return 0.0
+    p99 = float(np.percentile(arr, 99)) / 255.0
+    bright_ratio = float(np.mean(arr > 220))
+    return max(0.0, min(1.0, 0.7 * p99 + 0.3 * min(bright_ratio * 25.0, 1.0)))
+
+
+def _estimate_candidate_bbox(image: Image.Image) -> List[int]:
+    """
+    Approximate a review box around the most focal bright candidate.
+    This is not a medical segmentation mask; it avoids returning the whole image
+    as the lesion box when the UI asks for a location hint.
+    """
+    arr = np.array(image.convert("L")).astype(np.float32)
+    h, w = arr.shape
+    if h == 0 or w == 0 or float(arr.max() - arr.min()) < 1e-6:
+        return [0, 0, w, h]
+
+    threshold = np.percentile(arr, 99.3)
+    mask = arr >= threshold
+
+    # Ignore the outer border where skull/table artifacts often dominate.
+    y_margin = int(h * 0.06)
+    x_margin = int(w * 0.06)
+    mask[:y_margin, :] = False
+    mask[h - y_margin:, :] = False
+    mask[:, :x_margin] = False
+    mask[:, w - x_margin:] = False
+
+    try:
+        from scipy import ndimage
+        labeled, count = ndimage.label(mask)
+        objects = ndimage.find_objects(labeled)
+        best = None
+        center = np.array([h / 2.0, w / 2.0])
+        for label_idx, obj in enumerate(objects, start=1):
+            if obj is None:
+                continue
+            ys, xs = obj
+            area = int(np.sum(labeled[obj] == label_idx))
+            if area < 3 or area > arr.size * 0.04:
+                continue
+            cy = (ys.start + ys.stop) / 2.0
+            cx = (xs.start + xs.stop) / 2.0
+            distance_penalty = np.linalg.norm(np.array([cy, cx]) - center) / max(h, w)
+            intensity = float(np.mean(arr[obj][labeled[obj] == label_idx])) / 255.0
+            score = intensity - 0.25 * distance_penalty
+            if best is None or score > best[0]:
+                best = (score, xs.start, ys.start, xs.stop, ys.stop)
+        if best is not None:
+            _, x1, y1, x2, y2 = best
+        else:
+            rows = np.any(mask, axis=1)
+            cols = np.any(mask, axis=0)
+            if not rows.any() or not cols.any():
+                return [0, 0, w, h]
+            y1, y2 = np.where(rows)[0][[0, -1]]
+            x1, x2 = np.where(cols)[0][[0, -1]]
+    except Exception:
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+        if not rows.any() or not cols.any():
+            return [0, 0, w, h]
+        y1, y2 = np.where(rows)[0][[0, -1]]
+        x1, x2 = np.where(cols)[0][[0, -1]]
+
+    pad = max(8, int(min(h, w) * 0.025))
+    return [
+        int(max(0, x1 - pad)),
+        int(max(0, y1 - pad)),
+        int(min(w, x2 + pad)),
+        int(min(h, y2 + pad)),
+    ]
+
+
+def _select_target_slices(all_slices: List[Dict[str, Any]], max_slices: int) -> List[Dict[str, Any]]:
+    """
+    Choose a bounded set for MedGemma while preserving recall:
+    suspicious score peaks plus neighbors, with a few evenly spaced baseline slices.
+    """
+    n = len(all_slices)
+    if n <= max_slices:
+        return list(all_slices)
+
+    selected = set()
+    baseline_count = min(n, max(1, min(BASELINE_SERIES_SAMPLES, max_slices // 4)))
+    for idx in np.linspace(0, n - 1, baseline_count, dtype=int):
+        selected.add(int(idx))
+
+    ranked = sorted(
+        range(n),
+        key=lambda i: float(all_slices[i].get("clip_score", 0.0)),
+        reverse=True,
+    )
+    for center in ranked:
+        for offset in (0, -1, 1):
+            candidate = center + offset
+            if 0 <= candidate < n:
+                selected.add(candidate)
+            if len(selected) >= max_slices:
+                break
+        if len(selected) >= max_slices:
+            break
+
+    return [all_slices[i] for i in sorted(selected)]
+
+
+# Auto-cleanup: remove temp analysis images older than 1 hour
+def _cleanup_old_temp_images():
+    """Periodically clean up old analysis images from temp directory."""
+    img_root = os.path.join(tempfile.gettempdir(), "medgemma_images")
+    if not os.path.exists(img_root):
+        return
+    now = time.time()
+    for entry in os.listdir(img_root):
+        entry_path = os.path.join(img_root, entry)
+        if os.path.isdir(entry_path):
+            age = now - os.path.getmtime(entry_path)
+            if age > 3600:  # older than 1 hour
+                shutil.rmtree(entry_path, ignore_errors=True)
 
 
 # Pydantic models for request/response
@@ -168,7 +418,7 @@ async def root():
     """Root endpoint - health check."""
     return HealthResponse(
         status="healthy",
-        model_loaded=model is not None,
+        model_loaded=_medgemma_instance is not None,
         device=device,
         gpu_available=torch.cuda.is_available(),
     )
@@ -177,100 +427,34 @@ async def root():
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
+    # Run temp file cleanup on health check
+    _cleanup_old_temp_images()
     return HealthResponse(
         status="healthy",
-        model_loaded=model is not None,
+        model_loaded=_medgemma_instance is not None,
         device=device,
         gpu_available=torch.cuda.is_available(),
     )
 
 
-@app.post("/analyze", response_model=AnalysisResponse)
+@app.post("/analyze")
 async def analyze_dicom(
     files: List[UploadFile] = File(...),
     modality: str = "CTA",
 ):
     """
     Analyze DICOM files for aneurysm detection.
-    
-    Upload multiple DICOM files (one series) for analysis.
+    Redirects to MedGemma pipeline (legacy ResNet3D model removed).
     """
-    import time
-    start_time = time.time()
-    
-    if model is None:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
+    if _medgemma_instance is None:
+        raise HTTPException(status_code=503, detail="MedGemma model not loaded yet")
+
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-    
-    # Generate analysis ID
-    analysis_id = str(uuid.uuid4())[:8]
-    
-    # Create temporary directory for DICOM files
-    temp_dir = Path(tempfile.mkdtemp())
-    
-    try:
-        # Save uploaded files
-        for f in files:
-            file_path = temp_dir / f.filename
-            with open(file_path, 'wb') as buffer:
-                shutil.copyfileobj(f.file, buffer)
-        
-        # Preprocess
-        volume, metadata = preprocessor.preprocess(str(temp_dir), modality)
-        
-        # Convert to tensor
-        volume_tensor = torch.from_numpy(volume).float().unsqueeze(0).unsqueeze(0)
-        volume_tensor = volume_tensor.to(device)
-        
-        # Run inference
-        with torch.no_grad():
-            outputs = model(volume_tensor)
-            probabilities = outputs['probabilities'].cpu().numpy()[0]
-        
-        # Create predictions
-        predictions = []
-        threshold = 0.5
-        
-        for i, (name, prob) in enumerate(zip(LOCATION_NAMES, probabilities)):
-            predictions.append(PredictionResult(
-                location=name,
-                probability=float(prob),
-                detected=bool(prob > threshold),
-            ))
-        
-        # Determine overall risk
-        overall_prob = probabilities[-1]  # Last one is "Aneurysm Present"
-        if overall_prob > 0.7:
-            risk = "High"
-        elif overall_prob > 0.3:
-            risk = "Moderate"
-        else:
-            risk = "Low"
-        
-        processing_time = time.time() - start_time
-        
-        # Store result
-        result = AnalysisResponse(
-            id=analysis_id,
-            status="completed",
-            predictions=predictions,
-            overall_risk=risk,
-            confidence=float(overall_prob),
-            processing_time=processing_time,
-        )
-        
-        analysis_store[analysis_id] = result
-        
-        return result
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-    
-    finally:
-        # Cleanup temp directory
-        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Delegate to the MedGemma upload pipeline
+    file_contents = [{"filename": f.filename, "content": f.file.read()} for f in files]
+    return _run_medgemma_logic_full(file_contents)
 
 
 @app.get("/analysis/{analysis_id}")
@@ -349,42 +533,13 @@ class MedGemmaResponse(BaseModel):
 # Store for MedGemma results
 medgemma_store: Dict[str, Any] = {}
 
-# MedGemma model (lazy loaded)
-medgemma_model = None
-medgemma_model_error = None
-
-
-def get_medgemma():
-    """Lazy load MedGemma model with error handling."""
-    global medgemma_model, medgemma_model_error
-    
-    # If we already tried and failed, return the error
-    if medgemma_model_error:
-        raise HTTPException(status_code=500, detail=f"MedGemma model failed to load: {medgemma_model_error}")
-    
-    if medgemma_model is None:
-        try:
-            print("🔄 Loading MedGemma model...")
-            sys.path.insert(0, str(Path(__file__).parent.parent / 'medgemma'))
-            from inference import MedGemmaInference
-            medgemma_model = MedGemmaInference()
-            print("✅ MedGemma model loaded!")
-        except Exception as e:
-            medgemma_model_error = str(e)
-            print(f"❌ MedGemma loading failed: {e}")
-            raise HTTPException(status_code=500, detail=f"MedGemma model failed to load: {e}")
-    
-    return medgemma_model
-
 
 @app.get("/medgemma/patients")
 async def list_medgemma_patients():
     """List patients from the dataset for MedGemma analysis."""
     import pandas as pd
     
-    # Dataset path - using extracted folder
-    data_root = Path("C:/Users/Rayan/Desktop/Main Project")
-    train_csv = data_root / "train.csv"
+    train_csv = DATA_ROOT / "train.csv"
     
     if not train_csv.exists():
         return {"success": False, "error": f"train.csv not found at {train_csv}", "patients": []}
@@ -431,100 +586,13 @@ async def list_medgemma_patients():
         return {"success": False, "error": str(e), "patients": []}
 
 
-def _run_medgemma_logic(file_contents: list) -> dict:
-    """
-    Core MedGemma processing logic — accepts pre-read file bytes.
-    file_contents: list of {"filename": str, "content": bytes}
-    Returns the same dict shape as /medgemma/analyze-upload.
-    """
-    import time
-    import base64
-    import traceback
-    from io import BytesIO
-    from PIL import Image, ImageDraw
-    from scipy import ndimage
-    from scipy.ndimage import label, find_objects
 
-    start_time = time.time()
-    analysis_id = str(uuid.uuid4())[:8]
-
-    if not file_contents:
-        raise HTTPException(status_code=400, detail="No files uploaded")
-
-    print(f"\n{'='*60}")
-    print(f"📤 Processing {len(file_contents)} files for MedGemma analysis")
-    print(f"{'='*60}")
-
-    findings = []
-    slices_analyzed = 0
-
-    # Create temp directory for this analysis's images
-    analysis_img_dir = os.path.join(tempfile.gettempdir(), "medgemma_images", analysis_id)
-    os.makedirs(analysis_img_dir, exist_ok=True)
-
-    # 1. Collect all valid slices from inputs (DICOM & NIfTI)
-    all_slices = []
-
-    for fc in file_contents:
-        fname = fc["filename"].lower()
-        content = fc["content"]
-        file = type('MockFile', (), {'filename': fc["filename"]})()  # for logging
-        try:
-            pass  # content already read
-        except Exception:
-            pass
-
-        try:
-            if fname.endswith(('.nii', '.nii.gz')):
-                try:
-                    import nibabel as nib
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".nii" if fname.endswith('.nii') else ".nii.gz") as tmp:
-                        tmp.write(content)
-                        tmp_path = tmp.name
-                    nii = nib.load(tmp_path)
-                    data = nii.get_fdata()
-                    os.unlink(tmp_path)
-                    if len(data.shape) == 3:
-                        num_slices = data.shape[2]
-                        # Detect modality from first slice pixels (NIfTI has no DICOM tags)
-                        sample = data[:, :, num_slices // 2].astype(np.float32)
-                        nii_modality = detect_modality_from_pixels(sample)
-                        for z in range(num_slices):
-                            arr = data[:, :, z].astype(np.float32)
-                            arr = np.rot90(arr)
-                            all_slices.append({
-                                "pixel_array": arr,
-                                "filename": f"{fname} [Slice {z+1}]",
-                                "original_filename": fname,
-                                "modality": nii_modality,
-                            })
-                except ImportError:
-                    print("⚠️ nibabel not installed, skipping NIfTI")
-                except Exception as e:
-                    print(f"⚠️ NIfTI error {fname}: {e}")
-            elif fname.endswith('.dcm'):
-                try:
-                    import pydicom
-                    from io import BytesIO as _BIO
-                    dcm = pydicom.dcmread(_BIO(content))
-                    arr = dcm.pixel_array.astype(np.float32)
-                    slope = float(getattr(dcm, 'RescaleSlope', 1))
-                    intercept = float(getattr(dcm, 'RescaleIntercept', 0))
-                    arr = arr * slope + intercept
-                    all_slices.append({"pixel_array": arr, "filename": fname, "original_filename": fname})
-                except Exception as e:
-                    print(f"⚠️ DICOM error {fname}: {e}")
-        except Exception as e:
-            print(f"Error reading {fname}: {e}")
-
-    # ---- from here the logic is identical to the original endpoint ----
 
 
 @app.post("/medgemma/analyze-upload")
 def analyze_uploaded_files(files: List[UploadFile] = File(...)):
     """
-    Analyze uploaded CT slices with bounding box and heatmap visualization.
-    Uses intensity-based region detection to find high-density areas.
+    Analyze uploaded DICOM/NIfTI slices with candidate selection and MedGemma.
     """
     # BUG FIX: Read all bytes FIRST before any processing touches the streams
     file_contents = [{"filename": f.filename, "content": f.file.read()} for f in files]
@@ -532,7 +600,7 @@ def analyze_uploaded_files(files: List[UploadFile] = File(...)):
 
 
 def _run_medgemma_logic_full(file_contents: list) -> dict:
-    import time
+    """Core MedGemma processing logic — accepts pre-read file bytes."""
     import traceback
     from io import BytesIO
     from PIL import Image
@@ -574,7 +642,8 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
                 try:
                     import nibabel as nib
                     # NIfTI requires a file path usually
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=fname) as tmp:
+                    nii_suffix = ".nii.gz" if fname.endswith('.nii.gz') else ".nii"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=nii_suffix) as tmp:
                         tmp.write(content)
                         tmp_path = tmp.name
                     
@@ -594,90 +663,111 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
                             # We'll assume standard orientation for now or fix in preprocessor
                             arr = np.rot90(arr) 
                             
+                            # Detect modality from pixel stats (NIfTI has no DICOM tags)
+                            sample_mid = data[:, :, num_slices // 2].astype(np.float32)
+                            nii_mod = detect_modality_from_pixels(sample_mid)
                             all_slices.append({
                                 "pixel_array": arr,
                                 "filename": f"{fname} [Slice {z+1}]",
-                                "original_filename": fname
+                                "original_filename": fname,
+                                "modality": nii_mod,
+                                "series_uid": fname,
+                                "sop_instance_uid": f"{fname}:{z+1}",
+                                "instance_number": z + 1,
+                                "slice_location": z,
+                                "image_position_z": z,
                             })
                 except ImportError:
                     print("⚠️ nibabel not installed, skipping NIfTI")
                 except Exception as e:
                     print(f"⚠️ NIfTI error {fname}: {e}")
                     
-            elif fname.endswith('.dcm'):
-                # Handle DICOM — detect modality from metadata
-                try:
-                    import pydicom
-                    dcm = pydicom.dcmread(BytesIO(content))
-                    # Detect modality from DICOM tags
-                    modality = detect_modality_from_dicom(dcm)
-                    # Rescale pixel values (HU for CT, arbitrary for MRI)
-                    arr = dcm.pixel_array.astype(np.float32)
-                    slope = float(getattr(dcm, 'RescaleSlope', 1))
-                    intercept = float(getattr(dcm, 'RescaleIntercept', 0))
-                    arr = arr * slope + intercept
-
-                    all_slices.append({
-                        "pixel_array": arr,
-                        "filename": fname,
-                        "original_filename": fname,
-                        "modality": modality,
-                    })
-                except Exception as e:
-                    print(f"⚠️ DICOM error {fname}: {e}")
             else:
-                # Skip non-medical inputs (JPG/PNG) as requested
-                # print(f"Skipping non-medical file: {fname}")
-                pass
+                # Handle DICOM regardless of extension. Some DICOM series use
+                # numeric/no-extension filenames, and filtering by ".dcm" drops them.
+                try:
+                    dcm = _read_dicom_from_bytes(content)
+                    modality = detect_modality_from_dicom(dcm)
+                    slice_record = _dicom_to_slice(dcm, fname)
+                    slice_record["modality"] = modality
+                    all_slices.append(slice_record)
+                except Exception as e:
+                    print(f"⚠️ DICOM/medical image error {fname}: {e}")
                 
         except Exception as e:
             print(f"Error reading {file.filename}: {e}")
 
     if not all_slices:
-        # Fallback for empty or all-invalid
-        pass
+        raise HTTPException(
+            status_code=400,
+            detail="No valid DICOM or NIfTI slices found. Upload a complete medical image series.",
+        )
 
-    # 2. Pre-filter with BiomedCLIP to select Top 15 most suspicious slices
-    # This prevents timeouts (228 slices = 2 hours) and guarantees we don't
-    # accidentally filter out the whole scan due to uncalibrated thresholds.
+    # Critical for correctness: upload order and SOPInstanceUID filename order are
+    # not anatomical order. Sort before numbering, sampling, and reporting.
+    all_slices.sort(key=_slice_sort_key)
+    for i, slice_data in enumerate(all_slices):
+        slice_data["original_idx"] = i
+        slice_data["slice_number"] = i + 1
+
+    # 2. Pre-filter with BiomedCLIP — select Top-K most suspicious slices
+    # Without filtering: 200+ slices can take hours. Candidate selection keeps
+    # top-scored slices, their neighbors, and a few baseline samples.
     global _biomedclip_filter, _medgemma_instance
     if _biomedclip_filter is not None and all_slices:
-        import time as _t
-        _filter_start = _t.time()
+        _filter_start = time.time()
         print(f"  🔬 Scoring all {len(all_slices)} slices with BiomedCLIP...")
-        
+
+        modality_batches = defaultdict(list)
         for i, slice_data in enumerate(all_slices):
-            slice_data["original_idx"] = i
             modality = slice_data.get("modality", "CTA")
             region_img = preprocess_for_modality(slice_data["pixel_array"], modality)
-            
-            # Score every slice
-            _, score = _biomedclip_filter.is_suspicious(region_img, modality=modality, threshold=0.0)
-            slice_data["clip_score"] = score
             slice_data["region_img"] = region_img  # cache so we don't recompute
-            
-        # Don't filter out any slices because zero-shot BiomedCLIP might miss the aneurysm.
-        # Just compute the score for ensemble logging.
-        # Since MedGemma now runs at <1s per slice, we can safely process all slices.
-        target_slices = all_slices
-        
-        print(f"  🎯 Kept all {len(target_slices)} slices. Scoring took {_t.time() - _filter_start:.1f}s")
-        
-        # Re-sort back to original anatomical order for sequential processing
-        target_slices.sort(key=lambda x: x["original_idx"])
+            modality_batches[modality].append((i, region_img))
+
+        for modality, batch in modality_batches.items():
+            images = [img for _, img in batch]
+            try:
+                clip_scores = _biomedclip_filter.batch_score(images, modality=modality)
+            except Exception as e:
+                print(f"  ⚠️ Batch CLIP scoring failed for {modality}; using per-slice scoring: {e}")
+                clip_scores = [_biomedclip_filter.score(img, modality=modality) for img in images]
+
+            for (slice_idx, img), clip_score in zip(batch, clip_scores):
+                try:
+                    intensity_score = _biomedclip_filter.intensity_heuristic(img)
+                except Exception:
+                    intensity_score = _simple_image_suspicion(img)
+                all_slices[slice_idx]["clip_score"] = float(
+                    max(0.0, min(1.0, 0.7 * float(clip_score) + 0.3 * float(intensity_score)))
+                )
+
+        target_slices = _select_target_slices(all_slices, MAX_SLICES_FOR_MEDGEMMA)
+        kept_scores = [s.get("clip_score", 0.0) for s in target_slices]
+        print(
+            f"  🎯 Selected {len(target_slices)} of {len(all_slices)} slices "
+            f"(score range: {min(kept_scores):.3f}-{max(kept_scores):.3f})"
+        )
+        print(f"  📍 Slice numbers sent to MedGemma: {[s['slice_number'] for s in target_slices]}")
+        print(f"  ⏱️  BiomedCLIP scoring took {time.time() - _filter_start:.1f}s")
     else:
-        for i, slice_data in enumerate(all_slices):
-            slice_data["original_idx"] = i
-            slice_data["clip_score"] = 1.0
-        target_slices = all_slices
+        print("  ⚠️ BiomedCLIP unavailable; using fast intensity ranking and series sampling")
+        for slice_data in all_slices:
+            modality = slice_data.get("modality", "CTA")
+            region_img = preprocess_for_modality(slice_data["pixel_array"], modality)
+            slice_data["region_img"] = region_img
+            slice_data["clip_score"] = _simple_image_suspicion(region_img)
+        target_slices = _select_target_slices(all_slices, MAX_SLICES_FOR_MEDGEMMA)
+        print(f"  📍 Slice numbers sent to MedGemma: {[s['slice_number'] for s in target_slices]}")
 
     print(f"============================================================")
-    print(f"🧠 MEDGEMMA ANALYSIS ON ALL {len(target_slices)} SLICES")
+    print(f"🧠 MEDGEMMA ANALYSIS ON {len(target_slices)} SELECTED SLICES")
     print(f"============================================================")
 
     # 3. Analyze the target slices
     for loop_idx, slice_data in enumerate(target_slices):
         idx = slice_data["original_idx"]
+        slice_number = slice_data.get("slice_number", idx + 1)
         clip_score = slice_data["clip_score"]
         slice_filename = slice_data["filename"]
         
@@ -693,6 +783,9 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
             slices_analyzed += 1
             h, w = pixel_array.shape
 
+            # Resolve modality per-slice (each slice carries its own)
+            modality = slice_data.get("modality", "CTA")
+
             # === MODALITY-SPECIFIC PREPROCESSING ===
             # Use cached region_img if available
             region_img = slice_data.get("region_img")
@@ -701,39 +794,39 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
             
             windowed = np.array(region_img.convert("L"))  # For intensity fallback stats
 
-            slice_info = f"Slice {idx+1}"
+            slice_info = f"Slice {slice_number} of {len(all_slices)}"
             if hasattr(slice_file, 'filename'):
                 slice_info += f" ({slice_file.filename})"
 
-            print(f"  🔬 [{modality}] Slice {idx+1} suspicious (score={clip_score:.3f}) → sending to MedGemma")
-
-            # === MEDGEMMA DETAILED ANALYSIS (expensive ~30s) ===
+            print(f"  🔬 [{modality}] Slice {slice_number} suspicious (score={clip_score:.3f}) → sending to MedGemma")
 
             # === MEDGEMMA DETAILED ANALYSIS (expensive ~30-120s) ===
             if _medgemma_instance is None:
-                print(f"  ⚠️ Skipping Slice {idx+1}: MedGemma not loaded yet")
+                print(f"  ⚠️ Skipping Slice {slice_number}: MedGemma not loaded yet")
                 continue
 
             medgemma = _medgemma_instance
 
             print(f"  🧠 Running MedGemma [{modality}] on {slice_info}...")
-            import time as _t
-            _inference_start = _t.time()
+            _inference_start = time.time()
             llm_analysis = medgemma.analyze_for_kaggle(
                 region_img,
                 modality=modality,
                 slice_info=slice_info,
                 clip_score=clip_score,
-                # CoT only for highly suspicious slices — ~3-4x slower but more accurate
-                use_cot=(clip_score is not None and clip_score > 0.60),
+                # CoT disabled for screening — takes 227s vs 40s on RTX 3060.
+                # Fast structured prompt is sufficient for YES/NO screening.
+                use_cot=False,
             )
-            _inference_time = _t.time() - _inference_start
+            _inference_time = time.time() - _inference_start
             print(f"  ✅ MedGemma done in {_inference_time:.1f}s (BiomedCLIP score={clip_score:.3f})")
 
             # Parse MedGemma response to determine if finding is positive
             # Import the robust parser from analyze_all_slices
+            location_extractor = None
             try:
-                from analyze_all_slices import parse_aneurysm_response, extract_location_from_response, extract_confidence_from_response
+                from analyze_all_slices import parse_aneurysm_response, extract_location_from_response
+                location_extractor = extract_location_from_response
                 is_positive = parse_aneurysm_response(llm_analysis)
             except ImportError:
                 # Fallback to inline parsing if module not available
@@ -757,21 +850,31 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
             # === MAP SPATIAL POSITION TO ANATOMICAL LOCATION ===
             # MedGemma provides detailed location in its structured text response
             location_name = "Intracranial Vessel"  # fallback
+
+            if location_extractor is not None:
+                try:
+                    parsed_loc = location_extractor(llm_analysis)
+                    if parsed_loc and parsed_loc.lower() not in ("unknown location", "unknown", "n/a", "none"):
+                        location_name = parsed_loc
+                except Exception:
+                    pass
             
             # Extract from MedGemma output format: "LOCATION: Right MCA"
-            import re
+
             loc_match = re.search(r'LOCATION:\s*(.*?)(?:\n|$)', llm_analysis, re.IGNORECASE)
             if loc_match:
                 parsed_loc = loc_match.group(1).strip()
                 # Clean up if the model added brackets or extra text
                 parsed_loc = parsed_loc.replace('[', '').replace(']', '')
                 if parsed_loc and parsed_loc.lower() not in ('unknown', 'n/a', 'none', 'rsna location name'):
-                    location_name = parsed_loc
+                    if location_name == "Intracranial Vessel":
+                        location_name = parsed_loc
 
             # Save image for this finding
             img_path = os.path.join(analysis_img_dir, f"slice_{idx}.png")
             region_img.save(img_path, format="PNG")
             img_url = f"/medgemma/finding-image/{analysis_id}/{idx}"
+            bbox = _estimate_candidate_bbox(region_img)
 
             response = f"""MEDGEMMA ANALYSIS — {location_name}
 
@@ -779,15 +882,15 @@ def _run_medgemma_logic_full(file_contents: list) -> dict:
 
 Note: AI analysis — requires radiologist review."""
 
-            print(f"  >> Slice {idx+1}: Finding at {location_name}")
+            print(f"  >> Slice {slice_number}: Finding at {location_name}")
 
             findings.append({
                 "slice_index": idx,
-                "slice_number": idx + 1,
+                "slice_number": slice_number,
                 "response": response,
                 "image": img_url,
                 "regions": 1,
-                "bbox": (0, 0, w, h),
+                "bbox": bbox,
                 "location": location_name,
                 "intensity": float(np.mean(windowed))
             })
@@ -799,7 +902,6 @@ Note: AI analysis — requires radiologist review."""
     processing_time = time.time() - start_time
     
     # Group findings by anatomical location
-    from collections import defaultdict
     findings_by_location = defaultdict(list)
     for f in findings:
         loc = f.get("location", "Unknown")
@@ -832,16 +934,16 @@ Total ROIs: {total_regions} region(s) of interest
 Locations with findings:
 {chr(10).join(f'  - {loc}: {len(slices)} slice(s)' for loc, slices in findings_by_location.items())}
 
-Detection Method: Intensity-based region segmentation
+Detection Method: MedGemma vision-language analysis with candidate slice preselection
 
 This is automated detection. All findings require verification by a qualified radiologist."""
     else:
         report = f"""CT SCAN ANALYSIS REPORT
 
 Analyzed: {slices_analyzed} slice(s)
-No significant high-intensity regions detected.
+No MedGemma-positive aneurysm findings detected in the selected candidate slices.
 
-Detection Method: Intensity-based region segmentation
+Detection Method: MedGemma vision-language analysis with candidate slice preselection
 
 Note: Absence of findings does not rule out pathology."""
     
@@ -887,138 +989,35 @@ async def analyze_medgemma(
     sample_every: int = 10,
 ):
     """
-    Analyze a patient - DEMO MODE (no AI model required).
-    
-    Uses simple image analysis to generate demo findings for presentation.
+    Analyze an extracted dataset series with the same real pipeline used for uploads.
+    sample_every is kept for API compatibility; candidate selection happens in
+    _run_medgemma_logic_full so the full series can still be ranked correctly.
     """
-    import time
-    import pydicom
     import glob
-    import random
     
-    start_time = time.time()
-    analysis_id = str(uuid.uuid4())[:8]
-    
-    # Dataset path - using extracted folder
-    data_root = Path("C:/Users/Rayan/Desktop/Main Project")
-    series_folder = data_root / "series" / series_uid
+    series_folder = DATA_ROOT / "series" / series_uid
     
     if not series_folder.exists():
         raise HTTPException(status_code=404, detail=f"Series folder not found: {series_folder}")
     
     try:
-        # Load slices from folder
         dcm_files = sorted(glob.glob(str(series_folder / "*.dcm")))
-        
-        # If no .dcm extension, try all files
         if not dcm_files:
             dcm_files = sorted([str(f) for f in series_folder.iterdir() if f.is_file()])
         
         if not dcm_files:
             raise HTTPException(status_code=404, detail="No DICOM files found in series folder")
-        
-        total_slices = len(dcm_files)
-        print(f"📸 Analyzing {total_slices} slices from series {series_uid[:20]}...")
-        
-        # Sample slices for analysis
-        sample_indices = list(range(0, len(dcm_files), sample_every))
-        findings = []
-        
-        # DEMO MODE: Analyze slices using simple image processing
-        for idx in sample_indices:
-            dcm_file = dcm_files[idx]
-            
-            try:
-                dcm = pydicom.dcmread(dcm_file)
-                pixel_array = dcm.pixel_array.astype(np.float32)
-                slope = float(getattr(dcm, 'RescaleSlope', 1))
-                intercept = float(getattr(dcm, 'RescaleIntercept', 0))
-                pixel_array = pixel_array * slope + intercept
-                
-                # DEMO: Simple intensity-based "detection" for demonstration
-                # Checks for high-intensity regions that could indicate vessels/contrast
-                
-                # Apply CTA windowing
-                window_center, window_width = 300, 600
-                lower = window_center - window_width / 2
-                upper = window_center + window_width / 2
-                windowed = np.clip(pixel_array, lower, upper)
-                
-                # Calculate statistics
-                mean_intensity = np.mean(windowed)
-                max_intensity = np.max(windowed)
-                high_intensity_ratio = np.sum(windowed > (window_center + window_width * 0.3)) / windowed.size
-                
-                # Demo detection logic (for demonstration purposes)
-                # This is NOT real detection - just for demo/presentation
-                is_interesting_slice = (
-                    high_intensity_ratio > 0.02 and  # Has bright regions
-                    mean_intensity > lower + window_width * 0.3  # Not too dark
-                )
-                
-                # Add some randomness for demo variety (30% of interesting slices get flagged)
-                if is_interesting_slice and random.random() > 0.7:
-                    # Generate demo finding
-                    locations = ["Internal Carotid Artery (ICA)", "Middle Cerebral Artery (MCA)", 
-                                "Anterior Communicating Artery (AComm)", "Basilar Artery"]
-                    sides = ["Left", "Right", ""]
-                    confidences = ["HIGH", "MEDIUM"]
-                    
-                    location = random.choice(locations)
-                    side = random.choice(sides)
-                    confidence = random.choice(confidences)
-                    
-                    response = f"""FINDING: YES
-LOCATION: {side + ' ' if side else ''}{location}
-CONFIDENCE: {confidence}
-DESCRIPTION: Possible vascular abnormality detected in this slice. High-intensity region consistent with contrast-enhanced vessel. Further review recommended.
 
-Note: This is a DEMO result for presentation purposes."""
-                    
-                    findings.append(MedGemmaFinding(
-                        slice_index=idx,
-                        slice_number=idx + 1,
-                        response=response
-                    ))
-                    
-            except Exception as e:
-                print(f"Error reading DICOM {dcm_file}: {e}")
-                continue
-        
-        # Limit findings for demo
-        findings = findings[:5]  # Max 5 findings for demo
-        
-        # Generate summary report
-        processing_time = time.time() - start_time
-        
-        if findings:
-            report = f"""📊 DEMO ANALYSIS REPORT
+        dcm_files = _sort_dicom_file_paths(dcm_files)
+        file_contents = [
+            {"filename": Path(path).name, "content": Path(path).read_bytes()}
+            for path in dcm_files
+        ]
 
-Analyzed {len(sample_indices)} slices from series.
-⚠️ Potential findings detected in {len(findings)} slice(s).
-
-Note: This is a DEMO result for presentation/development purposes.
-For real analysis, a trained detection model should be used."""
-        else:
-            report = f"""📊 DEMO ANALYSIS REPORT
-
-Analyzed {len(sample_indices)} slices from series.
-✅ No obvious abnormalities detected in sampled slices.
-
-Note: This is a DEMO result for presentation/development purposes."""
-        
-        result = MedGemmaResponse(
-            id=analysis_id,
-            status="completed",
-            series_uid=series_uid,
-            report=report,
-            slices_analyzed=len(sample_indices),
-            has_findings=len(findings) > 0,
-            findings=findings,
-            processing_time=processing_time,
-        )
-        
-        medgemma_store[analysis_id] = result
+        print(f"📸 Running real MedGemma analysis for {len(file_contents)} slices from {series_uid[:20]}...")
+        result = _run_medgemma_logic_full(file_contents)
+        result["series_uid"] = series_uid
+        medgemma_store[result["id"]] = result
         return result
         
     except Exception as e:
@@ -1045,8 +1044,7 @@ async def get_slice_image(series_uid: str, slice_index: int, heatmap: bool = Fal
     from PIL import Image
     import glob
     
-    data_root = Path("C:/Users/Rayan/Desktop/Main Project")
-    series_folder = data_root / "series" / series_uid
+    series_folder = DATA_ROOT / "series" / series_uid
     
     if not series_folder.exists():
         raise HTTPException(status_code=404, detail="Series not found")
@@ -1055,6 +1053,7 @@ async def get_slice_image(series_uid: str, slice_index: int, heatmap: bool = Fal
     dcm_files = sorted(glob.glob(str(series_folder / "*.dcm")))
     if not dcm_files:
         dcm_files = sorted([str(f) for f in series_folder.iterdir() if f.is_file()])
+    dcm_files = _sort_dicom_file_paths(dcm_files)
     
     if slice_index >= len(dcm_files):
         raise HTTPException(status_code=404, detail="Slice index out of range")
@@ -1119,7 +1118,7 @@ async def get_slice_image(series_uid: str, slice_index: int, heatmap: bool = Fal
 def compare_models(files: List[UploadFile] = File(...)):
     """
     Run both models on the same uploaded files and return side-by-side results.
-    - MedGemma: intensity-based detection + LLM analysis
+    - MedGemma: candidate slice selection + vision-language analysis
     - Legacy ML: ResNet3D-18 (currently unavailable - no trained checkpoint)
     """
     import time
@@ -1170,10 +1169,11 @@ def compare_models(files: List[UploadFile] = File(...)):
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("BACKEND_PORT", 8000))
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=False,  # Disabled — reload causes deadlocks with heavy model loading
     )
 

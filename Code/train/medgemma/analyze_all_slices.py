@@ -36,13 +36,18 @@ def parse_aneurysm_response(response: str) -> bool:
     """
     response_lower = response.lower().strip()
     
-    # Pattern 1: Structured "ANEURYSM: YES/NO"
-    aneurysm_match = re.search(r'aneurysm\s*:\s*(yes|no)', response_lower)
+    # Pattern 1: Structured fields used by config.py prompts.
+    # Accept both legacy "ANEURYSM: YES" and current "ANEURYSM_DETECTED: YES".
+    aneurysm_match = re.search(
+        r'aneurysm(?:[_\s-]*detected)?\s*:\s*(yes|no)\b',
+        response_lower,
+    )
     if aneurysm_match:
         return aneurysm_match.group(1) == 'yes'
     
     # Pattern 2: Check for explicit NO statements first (to avoid false positives)
     negative_patterns = [
+        r'aneurysm[_\s-]*detected\s*:\s*no',
         r'no aneurysm',
         r'aneurysm[:\s]+no',
         r'not\s+(see|detect|observe|identify)',
@@ -58,6 +63,7 @@ def parse_aneurysm_response(response: str) -> bool:
     
     # Pattern 3: Check for positive indicators
     positive_patterns = [
+        r'aneurysm[_\s-]*detected\s*:\s*yes',
         r'aneurysm\s+detected',
         r'aneurysm\s+identified',
         r'aneurysm\s+present',
@@ -88,17 +94,16 @@ def extract_location_from_response(response: str) -> str:
     """Extract the anatomical location from MedGemma's response."""
     response_lower = response.lower()
     
-    # Location patterns with priority
+    # Location patterns with priority, normalized to RSNA column names where possible.
     location_patterns = [
-        (r'(left|right)\s+(infraclinoid|supraclinoid)\s+ica', lambda m: f"{m.group(1).title()} {m.group(2).title()} ICA"),
-        (r'(left|right)\s+mca', lambda m: f"{m.group(1).title()} MCA"),
-        (r'(left|right)\s+aca', lambda m: f"{m.group(1).title()} ACA"),
-        (r'(left|right)\s+pcomm', lambda m: f"{m.group(1).title()} PComm"),
-        (r'acomm|anterior\s+communicating', lambda m: "Anterior Communicating"),
+        (r'(left|right)\s+(infraclinoid|supraclinoid)\s+(?:internal\s+carotid\s+artery|ica)', lambda m: f"{m.group(1).title()} {m.group(2).title()} Internal Carotid Artery"),
+        (r'(left|right)\s+(?:middle\s+cerebral\s+artery|mca)', lambda m: f"{m.group(1).title()} Middle Cerebral Artery"),
+        (r'(left|right)\s+(?:anterior\s+cerebral\s+artery|aca)', lambda m: f"{m.group(1).title()} Anterior Cerebral Artery"),
+        (r'(left|right)\s+(?:posterior\s+communicating\s+artery|pcomm|p-comm)', lambda m: f"{m.group(1).title()} Posterior Communicating Artery"),
+        (r'acomm|a-comm|anterior\s+communicating', lambda m: "Anterior Communicating Artery"),
         (r'basilar\s+(tip|apex)', lambda m: "Basilar Tip"),
-        (r'basilar', lambda m: "Basilar Artery"),
-        (r'(left|right)\s+ica', lambda m: f"{m.group(1).title()} ICA"),
-        (r'circle\s+of\s+willis', lambda m: "Circle of Willis"),
+        (r'other\s+posterior\s+circulation|posterior\s+circulation', lambda m: "Other Posterior Circulation"),
+        (r'(left|right)\s+(?:internal\s+carotid\s+artery|ica)', lambda m: f"{m.group(1).title()} Internal Carotid Artery"),
     ]
     
     for pattern, formatter in location_patterns:
@@ -315,8 +320,7 @@ Be conservative - only say YES if you see a clear outpouching."""
                 )
             
             # Improved detection parsing - check structured output
-            response_lower = response.lower()
-            has_aneurysm = parse_aneurysm_response(response_lower)
+            has_aneurysm = parse_aneurysm_response(response)
             
             if has_aneurysm:
                 location = extract_location_from_response(response)

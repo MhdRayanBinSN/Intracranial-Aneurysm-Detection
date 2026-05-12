@@ -28,6 +28,7 @@ from config import (
     SYSTEM_PROMPT_CTA, SYSTEM_PROMPT_MRA,
     SYSTEM_PROMPT_MRI_T2, SYSTEM_PROMPT_MRI_T1_POST,
     CT_WINDOW_CENTER, CT_WINDOW_WIDTH,
+    CTA_WINDOWS,
     get_analysis_prompt,
 )
 
@@ -119,7 +120,7 @@ def preprocess_for_modality(pixel_array: np.ndarray, modality: str) -> Image.Ima
     if mod in ('CTA', 'CT'):
         # Multi-window RGB encoding (like Kaggle 1st place)
         # Ch0 = Brain window,  Ch1 = Vessel window,  Ch2 = Bone window
-        windows = [(40, 80), (300, 600), (700, 3000)]
+        windows = CTA_WINDOWS  # From config.py
         channels = []
         for center, width in windows:
             lo = center - width / 2
@@ -230,6 +231,8 @@ class MedGemmaInference:
             torch.cuda.empty_cache()
             free_vram = torch.cuda.mem_get_info()[0] / 1024**3
             print(f"🧹 Cleared cache. Free VRAM: {free_vram:.2f} GB", flush=True)
+        else:
+            free_vram = 0.0
 
         # 4-bit quantization: 8GB → ~2.5GB
         quantization_config = BitsAndBytesConfig(
@@ -242,7 +245,12 @@ class MedGemmaInference:
         print("🚀 Using 4-bit quantization (8GB → ~2.5GB)", flush=True)
 
         try:
-            max_memory = {0: "4GB", "cpu": "10GB"}
+            if torch.cuda.is_available():
+                gpu_memory_gb = max(3, int(free_vram * 0.85))
+                max_memory = {0: f"{gpu_memory_gb}GB", "cpu": "12GB"}
+                print(f"🧠 Allowing up to {gpu_memory_gb}GB GPU memory for MedGemma", flush=True)
+            else:
+                max_memory = {"cpu": "12GB"}
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 quantization_config=quantization_config,

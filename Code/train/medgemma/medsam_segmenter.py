@@ -1,12 +1,15 @@
 """
-MedSAM Segmentation Module — Accuracy Improvement #4
-=====================================================
-After MedGemma flags a slice as containing an aneurysm, MedSAM segments
+Segmentation Module (SAM-based)
+==============================
+After MedGemma flags a slice as containing an aneurysm, SAM segments
 the exact lesion boundary and returns a mask overlay.
 
-Model: bowang-lab/MedSAM (SAM fine-tuned on 1M+ medical images)
+Model: facebook/sam-vit-base (SAM ViT-B, fine-tuned on SA-1B)
 Size:  ~400 MB
 Speed: <1s per slice
+
+Note: For true medical-grade segmentation, replace with bowang-lab/MedSAM
+      once it is available in transformers format.
 
 Usage:
     segmenter = MedSAMSegmenter()
@@ -16,7 +19,7 @@ Usage:
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 from typing import Optional, Tuple
 
 
@@ -60,7 +63,6 @@ class MedSAMSegmenter:
         by finding the brightest circular region (likely a contrast-filled vessel).
         Falls back to center 40% of the image.
         """
-        import numpy as np
         arr = np.array(image.convert("L")).astype(np.float32)
         h, w = arr.shape
 

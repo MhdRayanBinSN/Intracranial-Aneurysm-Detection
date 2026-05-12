@@ -29,8 +29,10 @@ export default function Compare() {
   const handleFiles = (newFiles) => {
     const valid = newFiles.filter(f =>
       f.name.toLowerCase().endsWith('.dcm') ||
+      f.name.toLowerCase().endsWith('.dicom') ||
       f.name.toLowerCase().endsWith('.nii') ||
-      f.name.toLowerCase().endsWith('.nii.gz')
+      f.name.toLowerCase().endsWith('.nii.gz') ||
+      !f.name.includes('.')
     )
     if (valid.length === 0) {
       toast.error('Please upload DICOM (.dcm) or NIfTI (.nii/.nii.gz) files')
@@ -117,7 +119,7 @@ export default function Compare() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".dcm,.nii,.nii.gz"
+              accept=".dcm,.dicom,.nii,.nii.gz,application/dicom"
               onChange={(e) => handleFiles(Array.from(e.target.files))}
               className="hidden"
             />

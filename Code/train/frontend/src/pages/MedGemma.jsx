@@ -55,8 +55,10 @@ export default function MedGemma() {
     // Filter for image files and DICOM
     const validFiles = newFiles.filter(file => 
       file.name.toLowerCase().endsWith('.dcm') || 
+      file.name.toLowerCase().endsWith('.dicom') ||
       file.name.toLowerCase().endsWith('.nii') ||
-      file.name.toLowerCase().endsWith('.nii.gz')
+      file.name.toLowerCase().endsWith('.nii.gz') ||
+      !file.name.includes('.')
     )
     
     if (validFiles.length === 0) {
@@ -182,7 +184,7 @@ export default function MedGemma() {
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".dcm,.nii,.nii.gz"
+              accept=".dcm,.dicom,.nii,.nii.gz,application/dicom"
               onChange={handleFileSelect}
               className="hidden"
             />

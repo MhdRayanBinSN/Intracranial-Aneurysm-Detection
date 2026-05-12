@@ -5,13 +5,20 @@
 # transformers 5.x requires PyTorch 2.4+ (INCOMPATIBLE!)
 transformers==4.38.2        # Last version supporting PyTorch 2.1.x
 accelerate==0.27.2          # Compatible with transformers 4.38.x
+bitsandbytes>=0.41.0        # Required for 4-bit quantization (BitsAndBytesConfig)
+
+# BiomedCLIP pre-filter dependencies
+open-clip-torch>=2.24.0     # CLIP model for biomedclip_filter.py
+scipy>=1.11.0               # Used by intensity heuristics in biomedclip_filter.py
+scikit-learn>=1.3.0         # Used for AUC metrics in finetune_biomedclip.py
+
+# Medical imaging
+SimpleITK>=2.3.1
+nibabel>=5.2.0
 
 # Already installed in your aneurysm env (DO NOT reinstall):
 # torch==2.1.2+cu118  ✓
 # numpy==1.26.4       ✓
 # Pillow==12.0.0      ✓
 # pydicom==3.0.1      ✓
-# pydicom==3.0.1      ✓
 # tqdm==4.67.1        ✓
-SimpleITK>=2.3.1
-nibabel>=5.2.0
